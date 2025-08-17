@@ -1,0 +1,10 @@
+Flask
+tensorflow
+numpy
+librosa
+pydub
+soundfile
+pywebview
+scikit-learn
+pyserial
+pyttsx3
