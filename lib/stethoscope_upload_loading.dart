@@ -7,7 +7,8 @@ import 'result_stethoscope.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'auth.dart';
-import 'tts_manager.dart'; // ✅ IMPORT TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 
 class StethoscopeUploadLoadingPage extends StatefulWidget {
   final String chosenSide;
@@ -37,8 +38,8 @@ class _StethoscopeUploadLoadingPageState
   SharedPreferences? _prefs;
   bool _patternVerified = false;
 
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   bool _loadingStarted = false;
   late final Random _rnd;
@@ -65,12 +66,10 @@ class _StethoscopeUploadLoadingPageState
 
   static const _pythonChannel = MethodChannel('ai_inference');
 
-  // ✅ Responsive mode tracking
   int _tapCount = 0;
   bool _responsiveMode = false;
   Timer? _tapResetTimer;
 
-  // ✅ Reference screen size (Lenovo Yoga Tab 11: 2000 x 1200)
   static const double _referenceWidth = 2000.0;
   static const double _referenceHeight = 1200.0;
 
@@ -78,7 +77,8 @@ class _StethoscopeUploadLoadingPageState
   void initState() {
     super.initState();
     _rnd = Random(widget.seedRandom);
-    _initTts(); // ✅ UPDATED: Initialize TtsManager
+    _initTts();
+    _initArduino(); // ✅ NEW: Initialize Arduino
     _initAuth();
 
     _lungsController = AnimationController(
@@ -90,12 +90,21 @@ class _StethoscopeUploadLoadingPageState
     );
   }
 
-  // ✅ UPDATED: Initialize TtsManager
+  // ✅ NEW: Initialize Arduino on page load
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Update LCD
+    await _arduino.updateLCD('Authentication', 'Required');
+
+    // Bot: Waiting gesture
+    await _arduino.setBotPosition(head: 0, handL: 30, handR: 30);
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
@@ -105,7 +114,6 @@ class _StethoscopeUploadLoadingPageState
   }
 
   Future<void> _initAuth() async {
-    // ✅ UPDATED: Use TtsManager speak
     await _tts.speak("Authentication required to proceed");
 
     final ok = await AppAuth.ensureAuthenticated(context);
@@ -113,10 +121,25 @@ class _StethoscopeUploadLoadingPageState
     if (ok) {
       setState(() => _patternVerified = true);
 
-      // ✅ UPDATED: Use TtsManager speak
+      // ✅ LCD: Authentication successful
+      await _arduino.updateLCD('Auth Success', 'Starting...');
+
+      // ✅ Bot: Success gesture
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.gestureReset();
+
       await _tts.speak("Authentication successful. Starting analysis");
 
       _startLoadingSequence();
+    } else {
+      // ✅ LCD: Authentication failed
+      await _arduino.updateLCD('Auth Failed', 'Try Again');
+
+      // ✅ Bot: Rejection gesture
+      await _arduino.setBotPosition(head: -30, handL: 0, handR: 0);
+      await Future.delayed(const Duration(milliseconds: 1000));
+      await _arduino.gestureReset();
     }
   }
 
@@ -133,11 +156,9 @@ class _StethoscopeUploadLoadingPageState
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(snack);
 
-    // ✅ UPDATED: Use TtsManager speak
     _tts.speak(text);
   }
 
-  // ✅ Handle tap for responsive mode toggle
   void _handleTap() {
     _tapResetTimer?.cancel();
 
@@ -152,7 +173,6 @@ class _StethoscopeUploadLoadingPageState
             ? 'Responsive mode enabled'
             : 'Responsive mode disabled';
 
-        // ✅ UPDATED: Use TtsManager speak
         _tts.speak(message);
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -176,7 +196,6 @@ class _StethoscopeUploadLoadingPageState
     });
   }
 
-  // ✅ Calculate scaled value based on screen size
   double _scale(
     double value,
     double screenDimension,
@@ -186,6 +205,7 @@ class _StethoscopeUploadLoadingPageState
     return value * (screenDimension / referenceDimension);
   }
 
+  // ✅ UPDATED: Loading sequence with Arduino animations
   Future<void> _startLoadingSequence() async {
     if (!mounted) return;
     if (_loadingStarted) return;
@@ -200,15 +220,50 @@ class _StethoscopeUploadLoadingPageState
 
     _msgIndex = 0;
 
-    // ✅ UPDATED: Use TtsManager speak
+    // ✅ LCD: First analysis message
+    await _arduino.updateLCD('Analyzing', 'Audio File...');
+
+    // ✅ Bot: Analysis starting gesture
+    await _arduino.setBotPosition(head: 15, handL: 60, handR: 60);
+
     _tts.speak(_messages[_msgIndex]);
 
     _msgTicker?.cancel();
-    _msgTicker = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+    _msgTicker = Timer.periodic(const Duration(milliseconds: 1500), (_) async {
       if (!mounted) return;
       setState(() => _msgIndex = (_msgIndex + 1) % _messages.length);
 
-      // ✅ UPDATED: Use TtsManager speak (every other message)
+      // ✅ Update LCD with analysis steps
+      final lcdMessages = [
+        'Filtering::Noise...',
+        'Normalizing::Spectrum...',
+        'Detecting::Sounds...',
+        'Analyzing::Patterns...',
+        'AI Model::Processing...',
+        'Comparing::Cases...',
+        'Extracting::Features...',
+        'Applying::Filters...',
+        'Scoring::Results...',
+        'Finalizing::Report...',
+      ];
+
+      if (_msgIndex < lcdMessages.length) {
+        await _arduino.updateLCD(
+          lcdMessages[_msgIndex].split('::')[0],
+          lcdMessages[_msgIndex].split('::')[1],
+        );
+      }
+
+      // ✅ Bot: Subtle movements during analysis
+      if (_msgIndex % 3 == 0) {
+        await _arduino.setBotPosition(
+          head: 10 + (_msgIndex % 2) * 10,
+          handL: 50 + (_msgIndex % 3) * 10,
+          handR: 50 + (_msgIndex % 3) * 10,
+        );
+      }
+
+      // Speak every other message
       if (_msgIndex % 2 == 0) {
         _tts.speak(_messages[_msgIndex]);
       }
@@ -221,6 +276,12 @@ class _StethoscopeUploadLoadingPageState
     Map<String, double> result = {};
     try {
       _logs.add('Invoking Python channel: ai_inference.predictStethoscope');
+
+      // ✅ LCD: AI Processing
+      await _arduino.updateLCD('AI Processing', 'Please Wait...');
+
+      // ✅ Bot: Intense processing gesture
+      await _arduino.setBotPosition(head: 20, handL: 80, handR: 80);
 
       final Map<dynamic, dynamic> pyResult = await _pythonChannel.invokeMethod(
         'predictStethoscope',
@@ -239,10 +300,23 @@ class _StethoscopeUploadLoadingPageState
 
       _logs.add('Mapped UI percentages: $result');
 
-      // ✅ UPDATED: Use TtsManager speak
+      // ✅ LCD: Analysis complete
+      await _arduino.updateLCD('Analysis', 'Complete!');
+
+      // ✅ Bot: Success celebration
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 600));
+
       await _tts.speak("Analysis complete. Displaying results");
     } on PlatformException catch (e) {
       print('Python inference failed: $e');
+
+      // ✅ LCD: Error message
+      await _arduino.updateLCD('AI Error', 'Using Fallback');
+
+      // ✅ Bot: Error gesture
+      await _arduino.setBotPosition(head: -25, handL: 40, handR: 0);
+
       _showTemporaryMessage(
         'AI inference failed, showing random result',
         isError: true,
@@ -252,6 +326,9 @@ class _StethoscopeUploadLoadingPageState
 
       result = _generatePercentages(widget.chosenSide);
       _logs.add('Fallback random percentages: $result');
+
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.updateLCD('Fallback Result', 'Ready');
     } catch (e) {
       print('Unexpected error: $e');
       _logs.add('ERROR: Unexpected error: $e');
@@ -262,6 +339,13 @@ class _StethoscopeUploadLoadingPageState
 
     final mainLabel = _determineMainLabel(result);
     _logs.add('Determined main label: $mainLabel');
+
+    // ✅ LCD: Show result type
+    String resultDisplay = mainLabel.toUpperCase();
+    if (resultDisplay.length > 8) resultDisplay = resultDisplay.substring(0, 8);
+    await _arduino.updateLCD('Result:', resultDisplay);
+
+    await Future.delayed(const Duration(milliseconds: 1000));
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -316,7 +400,8 @@ class _StethoscopeUploadLoadingPageState
     _msgTicker?.cancel();
     _tapResetTimer?.cancel();
     _lungsController.dispose();
-    _tts.stop(); // ✅ UPDATED: Use TtsManager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
@@ -326,7 +411,6 @@ class _StethoscopeUploadLoadingPageState
     final screenWidth = size.width;
     final screenHeight = size.height;
 
-    // Hardcoded values
     const lungsWidth = 120.0;
     const lungsHeight = 160.0;
     const authFontSize = 22.0;
@@ -345,7 +429,6 @@ class _StethoscopeUploadLoadingPageState
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: GestureDetector(
-        // ✅ Detect taps anywhere on screen
         onTap: _handleTap,
         behavior: HitTestBehavior.translucent,
         child: Stack(
@@ -555,7 +638,6 @@ class _StethoscopeUploadLoadingPageState
               ),
             ),
 
-            // ✅ UPDATED: Speaking indicator using TtsManager
             if (_tts.isSpeaking)
               Positioned(
                 top: 20,
@@ -587,7 +669,6 @@ class _StethoscopeUploadLoadingPageState
                 ),
               ),
 
-            // ✅ Tap counter indicator (appears while tapping)
             if (_tapCount > 0)
               Positioned(
                 bottom: 10,
@@ -615,7 +696,8 @@ class _StethoscopeUploadLoadingPageState
   }
 }
 
-// The rest of the file (Pattern lock widget & painter) remains unchanged...
+// Pattern lock widget & painter (unchanged - keeping original code)
+// ... [Rest of the code remains the same]
 
 // Pattern lock widget & painter (unchanged)
 class _PatternLockWidget extends StatefulWidget {

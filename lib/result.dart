@@ -1,11 +1,11 @@
 // lib/result.dart
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart'; // ✅ ADD THIS
+import 'tts_manager.dart'; // ✅ UPDATED: Use TtsManager
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 import 'scale.dart';
 import 'dart:math';
 
 class ResultPage extends StatefulWidget {
-  // ✅ Changed to StatefulWidget
   final Map<String, double>
   percentages; // keys: 'crackle','wheeze','normal','both'
   final String mainLabel; // which label is highest
@@ -21,47 +21,57 @@ class ResultPage extends StatefulWidget {
 }
 
 class _ResultPageState extends State<ResultPage> {
-  // ✅ ADD TTS
-  late FlutterTts _flutterTts;
-  bool _isSpeaking = false;
+  final TtsManager _tts = TtsManager(); // ✅ UPDATED: Use TtsManager
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   @override
   void initState() {
     super.initState();
     _initTtsAndSpeak();
+    _initArduino(); // ✅ NEW: Initialize Arduino
   }
 
-  // ✅ ADD: Initialize TTS and speak results
+  // ✅ NEW: Initialize Arduino with result
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    final result = widget.mainLabel.toUpperCase();
+    final resultShort = result.length > 8 ? result.substring(0, 8) : result;
+
+    // Update LCD with result
+    await _arduino.updateLCD('Result:', resultShort);
+
+    // Bot gesture based on result
+    if (widget.mainLabel.toLowerCase() == 'normal') {
+      // Normal: Thumbs up (right hand)
+      await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
+    } else if (widget.mainLabel.toLowerCase() == 'crackle') {
+      // Crackle: Concerned (left hand up)
+      await _arduino.setBotPosition(head: -20, handL: 70, handR: 0);
+    } else if (widget.mainLabel.toLowerCase() == 'wheeze') {
+      // Wheeze: Alert (right hand up)
+      await _arduino.setBotPosition(head: 20, handL: 0, handR: 70);
+    } else if (widget.mainLabel.toLowerCase() == 'both') {
+      // Both: Warning (both hands up)
+      await _arduino.setBotPosition(head: 0, handL: 80, handR: 80);
+    }
+
+    await Future.delayed(const Duration(milliseconds: 2000));
+
+    // Update LCD to show confidence
+    final mainPercentage = widget.percentages[widget.mainLabel]?.round() ?? 0;
+    await _arduino.updateLCD(resultShort, '$mainPercentage% Confidence');
+  }
+
+  // ✅ UPDATED: Initialize TtsManager and speak results
   Future<void> _initTtsAndSpeak() async {
-    _flutterTts = FlutterTts();
-
     try {
-      await _flutterTts.setLanguage("en-US");
-      await _flutterTts.setSpeechRate(0.5);
-      await _flutterTts.setVolume(1.0);
-      await _flutterTts.setPitch(1.0);
+      await _tts.initialize();
 
-      if (Theme.of(context).platform == TargetPlatform.android) {
-        await _flutterTts.setVoice({
-          "name": "en-us-x-tpf-network",
-          "locale": "en-US",
-        });
-      }
-
-      _flutterTts.setStartHandler(() {
-        if (mounted) setState(() => _isSpeaking = true);
+      _tts.addListener(() {
+        if (mounted) setState(() {});
       });
 
-      _flutterTts.setCompletionHandler(() {
-        if (mounted) setState(() => _isSpeaking = false);
-      });
-
-      _flutterTts.setErrorHandler((msg) {
-        debugPrint("TTS Error: $msg");
-        if (mounted) setState(() => _isSpeaking = false);
-      });
-
-      // ✅ Speak results
       await Future.delayed(const Duration(milliseconds: 500));
       await _speakResults();
     } catch (e) {
@@ -69,20 +79,20 @@ class _ResultPageState extends State<ResultPage> {
     }
   }
 
-  // ✅ ADD: Speak method
+  // ✅ UPDATED: Speak method using TtsManager
   Future<void> _speak(String text) async {
     try {
-      if (_isSpeaking) {
-        await _flutterTts.stop();
+      if (_tts.isSpeaking) {
+        await _tts.stop();
       }
       debugPrint("🔊 Speaking: $text");
-      await _flutterTts.speak(text);
+      await _tts.speak(text);
     } catch (e) {
       debugPrint("❌ TTS speak error: $e");
     }
   }
 
-  // ✅ ADD: Speak the analysis results
+  // ✅ UPDATED: Speak the analysis results with Arduino animations
   Future<void> _speakResults() async {
     final order = ['normal', 'crackle', 'wheeze', 'both'];
     final entries = order
@@ -100,16 +110,52 @@ class _ResultPageState extends State<ResultPage> {
       announcement += "${entry.key}, $rounded percent. ";
     }
 
+    // ✅ LCD: Show all percentages (cycle through)
+    for (var entry in entries) {
+      if (!mounted) break;
+      final label = entry.key.toUpperCase();
+      final labelShort = label.length > 8 ? label.substring(0, 8) : label;
+      final percent = entry.value.round();
+      await _arduino.updateLCD(labelShort, '$percent%');
+      await Future.delayed(const Duration(milliseconds: 1500));
+    }
+
     // Add interpretation
     if (widget.mainLabel.toLowerCase() == 'normal') {
       announcement += "Lung sounds appear normal.";
+
+      // ✅ LCD: Normal result
+      await _arduino.updateLCD('Normal Lungs', 'All Clear!');
+
+      // ✅ Bot: Happy gesture (both hands up briefly)
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
     } else if (widget.mainLabel.toLowerCase() == 'crackle') {
       announcement += "Crackles detected. Consider medical consultation.";
+
+      // ✅ LCD: Crackle warning
+      await _arduino.updateLCD('Crackles Found', 'See Doctor');
+
+      // ✅ Bot: Concerned gesture
+      await _arduino.setBotPosition(head: -25, handL: 80, handR: 0);
     } else if (widget.mainLabel.toLowerCase() == 'wheeze') {
       announcement += "Wheezes detected. Consider medical consultation.";
+
+      // ✅ LCD: Wheeze warning
+      await _arduino.updateLCD('Wheezes Found', 'See Doctor');
+
+      // ✅ Bot: Alert gesture
+      await _arduino.setBotPosition(head: 25, handL: 0, handR: 80);
     } else if (widget.mainLabel.toLowerCase() == 'both') {
       announcement +=
           "Both crackles and wheezes detected. Medical consultation recommended.";
+
+      // ✅ LCD: Both warning
+      await _arduino.updateLCD('Both Detected!', 'Urgent Care');
+
+      // ✅ Bot: Warning gesture (both hands high)
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
     }
 
     await _speak(announcement);
@@ -117,7 +163,8 @@ class _ResultPageState extends State<ResultPage> {
 
   @override
   void dispose() {
-    _flutterTts.stop();
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
@@ -126,7 +173,6 @@ class _ResultPageState extends State<ResultPage> {
     final bg = 'assets/background.png';
     final lungs = 'assets/lungs_ai.png';
 
-    // clamp and sort for display order
     final order = ['normal', 'crackle', 'wheeze', 'both'];
     final entries = order
         .map((k) => MapEntry(k, widget.percentages[k] ?? 0.0))
@@ -247,7 +293,7 @@ class _ResultPageState extends State<ResultPage> {
 
                       const SizedBox(height: 22),
 
-                      // Add a small detailed card
+                      // Detailed card
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -284,9 +330,17 @@ class _ResultPageState extends State<ResultPage> {
 
                       const SizedBox(height: 16),
                       ElevatedButton(
-                        onPressed: () {
-                          // ✅ Speak before navigating back
+                        onPressed: () async {
+                          // ✅ UPDATED: Arduino feedback before navigation
+                          await _arduino.updateLCD('Returning', 'Home...');
+                          await _arduino.gestureReset();
+
                           _speak("Returning to home screen");
+
+                          await Future.delayed(
+                            const Duration(milliseconds: 500),
+                          );
+
                           Navigator.of(
                             context,
                           ).popUntil((route) => route.isFirst);
@@ -300,8 +354,8 @@ class _ResultPageState extends State<ResultPage> {
             ),
           ),
 
-          // ✅ ADD: Speaking indicator
-          if (_isSpeaking)
+          // ✅ UPDATED: Speaking indicator using TtsManager
+          if (_tts.isSpeaking)
             Positioned(
               top: 20,
               right: 20,

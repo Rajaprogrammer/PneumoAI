@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart'; // For addPostFrameCallback
+import 'package:flutter/scheduler.dart';
 import 'scale.dart';
 import 'chest_xray.dart';
 import 'stethoscope_main.dart';
 import 'tts_manager.dart';
+import 'arduino_service.dart';
 
 class NextPage extends StatefulWidget {
   const NextPage({super.key});
@@ -17,43 +18,61 @@ class _NextPageState extends State<NextPage> {
   DateTime? _firstTapAt;
 
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService();
 
   @override
   void initState() {
     super.initState();
 
-    // ✅ Wait for first frame to be rendered before initializing TTS
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeTts();
+      _initializeArduino();
     });
   }
 
-  // ✅ Non-blocking TTS initialization
+  Future<void> _initializeArduino() async {
+    // Update LCD
+    await _arduino.updateLCD('PneumoAI', 'System Ready');
+    
+    // Welcome gesture
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _arduino.gestureWelcome();
+  }
+
   Future<void> _initializeTts() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
 
-      // ✅ Fire welcome message without blocking UI
       _speakWelcomeMessage();
     } catch (e) {
       debugPrint('❌ TTS initialization error: $e');
     }
   }
 
-  // ✅ Separate method for welcome message (runs async in background)
   void _speakWelcomeMessage() async {
     try {
       await Future.delayed(const Duration(milliseconds: 300));
+      
+      // LCD update
+      await _arduino.updateLCD('Welcome to', 'PneumoAI');
+      
       await _tts.speak("Welcome to PneumoAI");
       await Future.delayed(const Duration(seconds: 2));
+      
+      // LCD update
+      await _arduino.updateLCD('AI Detection', 'System');
+      
       await _tts.speak(
         "Detects pneumonia by analyzing chest X-rays and lung sounds",
       );
+      
+      // Reset LCD
+      await Future.delayed(const Duration(seconds: 3));
+      await _arduino.updateLCD('PneumoAI', 'Ready');
     } catch (e) {
       debugPrint('❌ TTS speaking error: $e');
     }
@@ -62,6 +81,7 @@ class _NextPageState extends State<NextPage> {
   @override
   void dispose() {
     _tts.stop();
+    _arduino.gestureReset();
     super.dispose();
   }
 
@@ -87,6 +107,40 @@ class _NextPageState extends State<NextPage> {
         ),
       );
     }
+  }
+
+  Future<void> _onStethoscopePressed() async {
+    // Update LCD
+    await _arduino.updateLCD('Lung Sound', 'Detection Mode');
+    
+    // Point to stethoscope option
+    await _arduino.gesturePointLeft();
+    
+    await Future.delayed(const Duration(milliseconds: 800));
+    
+    _tts.stop();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const StethoscopeMainPage(),
+      ),
+    );
+  }
+
+  Future<void> _onXRayPressed() async {
+    // Update LCD
+    await _arduino.updateLCD('X-Ray Analysis', 'Mode');
+    
+    // Point to X-ray option
+    await _arduino.gesturePointRight();
+    
+    await Future.delayed(const Duration(milliseconds: 800));
+    
+    _tts.stop();
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ChestXRayPage()),
+    );
   }
 
   @override
@@ -212,15 +266,7 @@ class _NextPageState extends State<NextPage> {
                       ),
                     ),
                   ),
-                  onPressed: () {
-                    _tts.stop(); // Stop current speech before navigation
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const StethoscopeMainPage(),
-                      ),
-                    );
-                  },
+                  onPressed: _onStethoscopePressed,
                   child: Row(
                     children: [
                       ClipRRect(
@@ -275,13 +321,7 @@ class _NextPageState extends State<NextPage> {
                       ),
                     ),
                   ),
-                  onPressed: () {
-                    _tts.stop(); // Stop current speech before navigation
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ChestXRayPage()),
-                    );
-                  },
+                  onPressed: _onXRayPressed,
                   child: Row(
                     children: [
                       ClipRRect(
@@ -373,10 +413,67 @@ class _NextPageState extends State<NextPage> {
               ),
             ),
 
+            // ✅ SERIAL TOGGLE BUTTON (Top Right, below TTS)
+            Positioned(
+              top: 80,
+              right: 20,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    setState(() {
+                      _arduino.toggleSerial();
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(30),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _arduino.isSerialEnabled
+                          ? Colors.green.shade500
+                          : Colors.grey.shade400,
+                      borderRadius: BorderRadius.circular(30),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _arduino.isSerialEnabled
+                              ? Icons.cable
+                              : Icons.cable_outlined,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _arduino.isSerialEnabled ? 'Serial ON' : 'Serial OFF',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
             // ✅ Speaking indicator (when TTS is active)
             if (_tts.isSpeaking)
               Positioned(
-                top: 80,
+                top: 140,
                 right: 20,
                 child: Container(
                   padding: const EdgeInsets.symmetric(

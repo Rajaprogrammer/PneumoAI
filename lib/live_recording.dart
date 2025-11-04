@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'tts_manager.dart'; // ✅ REPLACED WITH TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ IMPORT ARDUINO
 
 class LiveRecordingPage extends StatefulWidget {
   const LiveRecordingPage({super.key});
@@ -9,26 +10,38 @@ class LiveRecordingPage extends StatefulWidget {
 }
 
 class _LiveRecordingPageState extends State<LiveRecordingPage> {
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ ARDUINO
 
   @override
   void initState() {
     super.initState();
     _initTts();
+    _initArduino(); // ✅ ARDUINO INIT
   }
 
-  // ✅ Initialize TtsManager
+  // ✅ ARDUINO INITIALIZATION
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Update LCD
+    await _arduino.updateLCD('Live Record', 'Ready');
+
+    // Bot: Ready to record gesture (hands partially raised)
+    await _arduino.setBotPosition(head: 0, handL: 50, handR: 50);
+
+    await Future.delayed(const Duration(milliseconds: 1200));
+    await _arduino.gestureReset();
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
 
-      // ✅ Speak welcome message
       await Future.delayed(const Duration(milliseconds: 300));
       await _speak(
         "Tap start recording to record your lung sounds for AI analysis",
@@ -38,7 +51,6 @@ class _LiveRecordingPageState extends State<LiveRecordingPage> {
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -53,19 +65,18 @@ class _LiveRecordingPageState extends State<LiveRecordingPage> {
 
   @override
   void dispose() {
-    _tts.stop(); // ✅ STOP TTS WHEN PAGE DISPOSES
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ ARDUINO CLEANUP
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // 🎨 Color options
     const backgroundColor = Colors.white;
     const mainTextColor = Color(0xFF0d3b66);
-    const buttonColor = Color(0xFF4B0082); // dark purple
+    const buttonColor = Color(0xFF4B0082);
     const buttonTextColor = Colors.white;
 
-    // 🖼 Top-left lungs_ai.png
     const lungsWidth = 120.0;
     const lungsHeight = 160.0;
     const lungsLeft = 0.0;
@@ -75,25 +86,22 @@ class _LiveRecordingPageState extends State<LiveRecordingPage> {
     const titleLeft = 180.0;
     const titleTop = 30.0;
 
-    // 🖼 Lung illustration
     const lungWidth = 800.0;
     const lungHeight = 700.0;
     const lungLeft = -140.0;
     const lungTop = 130.0;
 
-    // 🔘 Recording button
     const buttonWidth = 500.0;
     const buttonHeight = 500.0;
     const buttonBorderRadius = 100.0;
 
-    // 🎤 Microphone inside button
     const micWidth = 250.0;
     const micHeight = 250.0;
-    const micLeft = 90.0; // relative to button
+    const micLeft = 90.0;
     const micTop = 90.0;
 
     const buttonTextFontSize = 50.0;
-    const buttonTextLeft = 55.0; // relative to button
+    const buttonTextLeft = 55.0;
     const buttonTextTop = 380.0;
 
     const buttonLeft = 700.0;
@@ -103,7 +111,7 @@ class _LiveRecordingPageState extends State<LiveRecordingPage> {
       backgroundColor: backgroundColor,
       body: Stack(
         children: [
-          // 🌄 Full background
+          // Background
           Positioned.fill(
             child: Image.asset('assets/background.png', fit: BoxFit.cover),
           ),
@@ -157,9 +165,19 @@ class _LiveRecordingPageState extends State<LiveRecordingPage> {
                 ),
                 elevation: 8,
               ),
-              onPressed: () {
-                // ✅ Speak before navigating
+              onPressed: () async {
+                // ✅ ARDUINO: Starting recording
+                await _arduino.updateLCD('Starting', 'Live Record');
+
+                // ✅ Bot: Excited gesture (both hands up)
+                await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+
+                await Future.delayed(const Duration(milliseconds: 600));
+                await _arduino.gestureReset();
+
                 _speak("Starting live recording");
+
+                await Future.delayed(const Duration(milliseconds: 400));
 
                 Navigator.pushNamed(context, '/loadingStethoscope');
               },
@@ -195,7 +213,7 @@ class _LiveRecordingPageState extends State<LiveRecordingPage> {
             ),
           ),
 
-          // ✅ ADD: Speaking indicator
+          // Speaking indicator
           if (_tts.isSpeaking)
             Positioned(
               top: 20,

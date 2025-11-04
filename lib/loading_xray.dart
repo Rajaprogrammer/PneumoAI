@@ -4,18 +4,11 @@ import 'result_xray.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'tts_manager.dart'; // ✅ REPLACED WITH TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 import 'auth.dart';
 import 'scale.dart';
 
-/// LoadingXRayPage
-/// - background.png fills screen
-/// - top-left lungs_ai.png shown
-/// - pattern lock (persistent) + "change pattern with PIN(1234)" flow (same approach as other page)
-/// - after successful pattern -> direct analysis loading (no 3-2-1)
-/// - centered auto-scrolling X-ray strip (width == 50% of screen)
-/// - below it rotating loading texts (10 messages)
-/// - randomized delay 7..10s, then navigates to ResultPage with generated percentages
 class LoadingXRayPage extends StatefulWidget {
   final String resultType; // 'normal' / 'viral' / 'bacterial'
   final String uploadedFileName;
@@ -32,19 +25,15 @@ class LoadingXRayPage extends StatefulWidget {
 
 class _LoadingXRayPageState extends State<LoadingXRayPage>
     with TickerProviderStateMixin {
-  // assets
   static const String backgroundAsset = 'assets/background.png';
   static const String lungsAsset = 'assets/lungs_ai.png';
-
-  // Python inference channel
   static const _pythonChannel = MethodChannel('ai_inference');
 
   bool _patternVerified = false;
 
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
-  // loading UI
   bool _loadingStarted = false;
   final List<String> _messages = [
     'Filtering background noise...',
@@ -65,7 +54,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
   late final int _delayMs;
   final List<String> _logs = [];
 
-  // image scroller
   final ScrollController _imgController = ScrollController();
   double _itemHeight = 220.0;
   bool _imgScrolling = false;
@@ -75,16 +63,26 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
   void initState() {
     super.initState();
     _rnd = Random();
-    _initTts(); // ✅ UPDATED: Initialize TtsManager
+    _initTts();
+    _initArduino(); // ✅ NEW: Initialize Arduino
     _initAuth();
   }
 
-  // ✅ Initialize TtsManager
+  // ✅ NEW: Initialize Arduino
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // Initial LCD: Authentication required
+    await _arduino.updateLCD('X-Ray Auth', 'Required');
+
+    // Bot: Waiting gesture
+    await _arduino.setBotPosition(head: 0, handL: 30, handR: 30);
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
@@ -95,7 +93,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -109,7 +106,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
   }
 
   Future<void> _initAuth() async {
-    // ✅ Speak authentication message
     await _speak("Authentication required to proceed with X-ray analysis");
 
     final ok = await AppAuth.ensureAuthenticated(context);
@@ -117,10 +113,25 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
     if (ok) {
       setState(() => _patternVerified = true);
 
-      // ✅ Speak authentication success
+      // ✅ LCD: Auth success
+      await _arduino.updateLCD('Auth Success', 'Starting...');
+
+      // ✅ Bot: Success gesture
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.gestureReset();
+
       await _speak("Authentication successful. Starting X-ray analysis");
 
       _startLoadingSequence();
+    } else {
+      // ✅ LCD: Auth failed
+      await _arduino.updateLCD('Auth Failed', 'Try Again');
+
+      // ✅ Bot: Rejection gesture
+      await _arduino.setBotPosition(head: -30, handL: 0, handR: 0);
+      await Future.delayed(const Duration(milliseconds: 1000));
+      await _arduino.gestureReset();
     }
   }
 
@@ -130,7 +141,14 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
     if (ok) {
       setState(() => _patternVerified = true);
 
-      // ✅ Speak authentication success
+      // ✅ LCD: Auth success
+      await _arduino.updateLCD('Auth Success', 'Starting...');
+
+      // ✅ Bot: Success gesture
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.gestureReset();
+
       await _speak("Authentication successful. Starting X-ray analysis");
 
       _startLoadingSequence();
@@ -150,68 +168,114 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(snack);
 
-    // ✅ Speak the message
     _speak(text);
   }
 
-  // Start the loading sequence (no 3-2-1). Shows the auto-scrolling X-ray strip + rotating texts.
+  // ✅ UPDATED: Loading sequence with Arduino animations
   Future<void> _startLoadingSequence() async {
     if (!mounted) return;
     setState(() => _loadingStarted = true);
 
-    // start rotating texts
-    _msgIndex = 0;
+    // ✅ LCD: Analysis starting
+    await _arduino.updateLCD('Analyzing', 'X-Ray...');
 
-    // ✅ Speak first message
+    // ✅ Bot: Analysis starting gesture
+    await _arduino.setBotPosition(head: 15, handL: 60, handR: 60);
+
+    _msgIndex = 0;
     _speak(_messages[_msgIndex]);
 
+    // ✅ LCD messages corresponding to analysis steps
+    final lcdMessages = [
+      ['Filtering', 'Noise...'],
+      ['Normalizing', 'Contrast...'],
+      ['Detecting', 'Opacities...'],
+      ['Analyzing', 'Texture...'],
+      ['Comparing', 'Cases...'],
+      ['AI Model', 'Ensemble...'],
+      ['Computing', 'Metrics...'],
+      ['Calibrating', 'Vectors...'],
+      ['Generating', 'Diagnosis...'],
+      ['Finalizing', 'Report...'],
+    ];
+
     _msgTicker?.cancel();
-    _msgTicker = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+    _msgTicker = Timer.periodic(const Duration(milliseconds: 1500), (_) async {
       if (!mounted) return;
       setState(() => _msgIndex = (_msgIndex + 1) % _messages.length);
 
-      // ✅ Speak every other message to avoid overwhelming
+      // ✅ Update LCD with current step
+      if (_msgIndex < lcdMessages.length) {
+        await _arduino.updateLCD(
+          lcdMessages[_msgIndex][0],
+          lcdMessages[_msgIndex][1],
+        );
+      }
+
+      // ✅ Bot: Subtle movements during analysis
+      if (_msgIndex % 3 == 0) {
+        await _arduino.setBotPosition(
+          head: 10 + (_msgIndex % 2) * 10,
+          handL: 55 + (_msgIndex % 3) * 10,
+          handR: 55 + (_msgIndex % 3) * 10,
+        );
+      }
+
       if (_msgIndex % 2 == 0) {
         _speak(_messages[_msgIndex]);
       }
     });
 
-    // start auto image scroll (we wait a frame to measure container)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _startImageAutoScroll();
     });
 
-    // Record start time for dynamic timing
     final startTime = DateTime.now();
     _logs.add('Prediction started at: ${startTime.toIso8601String()}');
 
-    // Call Python inference via MethodChannel
     Map<String, double> result = {};
     try {
       _logs.add('Invoking Python channel: ai_inference.predictXray');
+
+      // ✅ LCD: AI Processing
+      await _arduino.updateLCD('AI Processing', 'X-Ray Data...');
+
+      // ✅ Bot: Intense processing
+      await _arduino.setBotPosition(head: 20, handL: 80, handR: 80);
+
       final Map<dynamic, dynamic> pyResult = await _pythonChannel.invokeMethod(
         'predictXray',
         {'image': widget.uploadedFileName},
       );
 
-      // Map model output (Healthy/Pneumonia) to UI classes (normal/viral/bacterial)
       result = _mapModelOutputToUI(pyResult);
       _logs.add('Inference raw result: $pyResult');
       _logs.add('Mapped UI percentages: $result');
 
-      // Calculate actual prediction time
       final predictionTime = DateTime.now()
           .difference(startTime)
           .inMilliseconds;
       _delayMs = predictionTime;
       _logs.add('Inference duration: $_delayMs ms');
 
-      // ✅ Speak analysis complete
+      // ✅ LCD: Analysis complete
+      await _arduino.updateLCD('Analysis', 'Complete!');
+
+      // ✅ Bot: Success celebration
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 600));
+
       await _speak("X-ray analysis complete. Displaying results");
     } on PlatformException catch (e) {
       print('Python inference failed: $e');
       _logs.add('ERROR: Python inference failed: $e');
+
+      // ✅ LCD: Error message
+      await _arduino.updateLCD('AI Error', 'Using Fallback');
+
+      // ✅ Bot: Error gesture
+      await _arduino.setBotPosition(head: -25, handL: 40, handR: 0);
 
       if (e.code != 'UNSUPPORTED_ABI') {
         _showTemporaryMessage(
@@ -228,22 +292,30 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
           isError: false,
         );
       }
+
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.updateLCD('Fallback', 'Result Ready');
     }
 
-    // Ensure minimum delay for UI experience
-    final minDelay = 3000; // 3 seconds minimum
+    final minDelay = 3000;
     if (_delayMs < minDelay) {
       await Future.delayed(Duration(milliseconds: minDelay - _delayMs));
     }
     _logs.add('UI enforced min delay: $minDelay ms');
 
-    // cleanup tickers
     _msgTicker?.cancel();
     _imageTicker?.cancel();
     _imgScrolling = false;
 
     final mainLabel = _determineMainLabel(result);
     _logs.add('Determined main label: $mainLabel');
+
+    // ✅ LCD: Show result type
+    String resultDisplay = mainLabel.toUpperCase();
+    if (resultDisplay.length > 8) resultDisplay = resultDisplay.substring(0, 8);
+    await _arduino.updateLCD('Result:', resultDisplay);
+
+    await Future.delayed(const Duration(milliseconds: 1000));
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -257,15 +329,12 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
     );
   }
 
-  // Auto-scroll controller: animate by one item on each tick; reset when reach end
   void _startImageAutoScroll() {
     if (!mounted) return;
     if (_imgController.hasClients) {
-      // Fixed container dimensions
       const containerH = 500.0;
       _itemHeight = containerH * 0.9;
 
-      // Start periodic scrolling
       _imgScrolling = true;
       _imageTicker?.cancel();
       _imageTicker = Timer.periodic(const Duration(milliseconds: 900), (
@@ -348,14 +417,13 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
     _msgTicker?.cancel();
     _imageTicker?.cancel();
     _imgController.dispose();
-    _tts.stop(); // ✅ UPDATED: Use TtsManager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
-  // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
-    // Hardcoded layout constants
     const double lungsWidth = 120.0;
     const double lungsHeight = 160.0;
     const double messageSize = 22.0;
@@ -370,12 +438,10 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          // Background
           Positioned.fill(
             child: Image.asset(backgroundAsset, fit: BoxFit.cover),
           ),
 
-          // Top-left lungs logo
           Positioned(
             left: 0,
             top: 0,
@@ -384,7 +450,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
             child: Image.asset(lungsAsset, fit: BoxFit.contain),
           ),
 
-          // Main content
           Positioned.fill(
             child: SafeArea(
               child: Center(
@@ -411,7 +476,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
                           ],
                         ),
 
-                      // If pattern verified -> show the loading UI (images + texts)
                       if (_patternVerified)
                         SizedBox(
                           width: S.w(context, 1200.0),
@@ -423,7 +487,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
                                 duration: const Duration(milliseconds: 400),
                                 child: Column(
                                   children: [
-                                    // Centered container with auto-scrolling xrays (fixed dimensions)
                                     Builder(
                                       builder: (ctx) {
                                         final containerW = S.w(context, 600.0);
@@ -491,7 +554,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
 
                                     SizedBox(height: textSpacing),
 
-                                    // Rotating loading text (bigger)
                                     SizedBox(
                                       width: S.w(context, 960.0),
                                       child: AnimatedSwitcher(
@@ -551,7 +613,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
             ),
           ),
 
-          // ✅ UPDATED: Speaking indicator using TtsManager
           if (_tts.isSpeaking)
             Positioned(
               top: 20,
@@ -588,7 +649,6 @@ class _LoadingXRayPageState extends State<LoadingXRayPage>
   }
 }
 
-/// Simple no-glow behavior for ListView
 class _NoGlowBehavior extends ScrollBehavior {
   const _NoGlowBehavior();
   @override

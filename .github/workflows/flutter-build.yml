@@ -86,12 +86,15 @@ jobs:
             gradle-${{ runner.os }}-jdk${{ env.JAVA_VERSION }}-
             gradle-${{ runner.os }}-
 
-      - name: Cache Android Build
+      # 👈 Modified to exclude APK/AAB files from cache
+      - name: Cache Android Build (exclude APKs)
         uses: actions/cache@v4
         with:
           path: |
-            android/app/build
-            build/app
+            android/app/build/intermediates
+            android/app/build/kotlin
+            android/app/build/tmp
+            build/app/intermediates
           key: android-build-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'pubspec.lock') }}
           restore-keys: |
             android-build-${{ runner.os }}-
@@ -128,7 +131,6 @@ jobs:
           fi
 
       - name: Build release APK (all ABIs)
-        continue-on-error: true
         run: flutter build apk --release
 
       - name: Find and verify APK
@@ -146,6 +148,7 @@ jobs:
           APK_PATH=""
           
           for path in "${POSSIBLE_PATHS[@]}"; do
+            echo "Checking: $path"
             if [ -f "$path" ]; then
               echo "✅ Found APK at: $path"
               APK_PATH="$path"
@@ -159,6 +162,7 @@ jobs:
             echo "📂 Searching entire workspace for APK files:"
             find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found anywhere!"
             echo "apk_exists=false" >> $GITHUB_OUTPUT
+            exit 1
           else
             echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
             echo "apk_exists=true" >> $GITHUB_OUTPUT
@@ -167,24 +171,18 @@ jobs:
           fi
 
       - name: Upload build artifact
-        if: steps.find-apk.outputs.apk_exists == 'true'
+        if: always() && steps.find-apk.outputs.apk_exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: ${{ steps.find-apk.outputs.apk_path }}
           compression-level: 0
 
-      - name: Build failed - no APK
-        if: steps.find-apk.outputs.apk_exists == 'false'
-        run: |
-          echo "::error::Build completed but APK was not generated!"
-          echo "::warning::Release will NOT be created"
-
   release:
     name: Create Custom GitHub Release
     runs-on: ubuntu-latest
     needs: build
-    if: needs.build.outputs.apk_exists == 'true'
+    if: always() && needs.build.outputs.apk_exists == 'true'
     permissions:
       contents: write
     
@@ -195,8 +193,20 @@ jobs:
           name: app-release
           path: build-output
 
+      - name: List downloaded files
+        run: |
+          echo "📂 Downloaded files:"
+          ls -lah build-output/
+
       - name: Rename APK for release
-        run: mv build-output/app-release.apk build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk
+        run: |
+          if [ -f build-output/app-release.apk ]; then
+            mv build-output/app-release.apk build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk
+            echo "✅ APK renamed successfully"
+          else
+            echo "❌ APK not found in build-output/"
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

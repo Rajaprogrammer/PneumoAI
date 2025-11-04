@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'tts_manager.dart'; // ✅ IMPORT TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 import 'scale.dart';
 import 'prediction_logs.dart';
 import 'dart:math';
@@ -25,22 +26,84 @@ class _ResultStethoscopePageState extends State<ResultStethoscopePage> {
   int _tapCount = 0;
   DateTime? _firstTapAt;
 
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   @override
   void initState() {
     super.initState();
-    _initTts(); // Initialize TtsManager
-    _speakResults(); // Speak the results
+    _initTts();
+    _initArduino(); // ✅ NEW: Initialize Arduino
+    _speakResults();
   }
 
-  // ✅ Initialize TtsManager
+  // ✅ NEW: Initialize Arduino with stethoscope result
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    final resultShort = widget.mainLabel.length > 8
+        ? widget.mainLabel.substring(0, 8)
+        : widget.mainLabel;
+
+    // Display main result on LCD
+    await _arduino.updateLCD('Lung Sound:', resultShort);
+
+    // Bot gesture based on result
+    final mainLower = widget.mainLabel.toLowerCase();
+
+    if (mainLower == 'normal') {
+      // Normal: Thumbs up (right hand)
+      await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
+
+      await Future.delayed(const Duration(milliseconds: 1500));
+
+      final normalPercent = widget.percentages['normal']?.round() ?? 0;
+      await _arduino.updateLCD('Normal Lungs', '$normalPercent% Sure');
+    } else if (mainLower == 'crackle') {
+      final crackleVal = widget.percentages['crackle'] ?? 0.0;
+
+      if (crackleVal >= 70) {
+        // High crackle: Both hands up (warning)
+        await _arduino.setBotPosition(head: -20, handL: 85, handR: 0);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('Crackles!', 'See Doctor');
+      } else {
+        // Moderate crackle: Left hand up
+        await _arduino.setBotPosition(head: -15, handL: 70, handR: 0);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('Crackles', 'Get Checked');
+      }
+    } else if (mainLower == 'wheeze') {
+      final wheezeVal = widget.percentages['wheeze'] ?? 0.0;
+
+      if (wheezeVal >= 70) {
+        // High wheeze: Both hands up (warning)
+        await _arduino.setBotPosition(head: 20, handL: 0, handR: 85);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('Wheezes!', 'See Doctor');
+      } else {
+        // Moderate wheeze: Right hand up
+        await _arduino.setBotPosition(head: 15, handL: 0, handR: 70);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('Wheezes', 'Get Checked');
+      }
+    } else if (mainLower == 'both') {
+      // Both detected: Maximum warning (both hands high)
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+
+      await Future.delayed(const Duration(milliseconds: 1500));
+      await _arduino.updateLCD('Both Found!', 'See Doctor');
+    }
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
@@ -49,7 +112,6 @@ class _ResultStethoscopePageState extends State<ResultStethoscopePage> {
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -62,49 +124,81 @@ class _ResultStethoscopePageState extends State<ResultStethoscopePage> {
     }
   }
 
-  // ✅ ADD: Speak the stethoscope analysis results
+  // ✅ UPDATED: Speak results with Arduino animations
   Future<void> _speakResults() async {
     final order = ['normal', 'crackle', 'wheeze', 'both'];
     final entries = order
         .map((k) => MapEntry(k, widget.percentages[k] ?? 0.0))
         .toList();
 
-    // Build result announcement
     String announcement = "Lung sound analysis complete. ";
     announcement += "Main detection: ${widget.mainLabel}. ";
 
-    // Add percentages
+    // ✅ Cycle through percentages on LCD
+    await Future.delayed(const Duration(milliseconds: 1000));
+    for (var entry in entries) {
+      if (!mounted) break;
+      final label = entry.key.toUpperCase();
+      final labelShort = label.length > 8 ? label.substring(0, 8) : label;
+      final percent = entry.value.round();
+      await _arduino.updateLCD(labelShort, '$percent%');
+      await Future.delayed(const Duration(milliseconds: 1500));
+    }
+
     announcement += "Confidence levels: ";
     for (var entry in entries) {
       final rounded = entry.value.round();
       announcement += "${entry.key}, $rounded percent. ";
     }
 
-    // Add medical interpretation based on main label
+    // Add medical interpretation
     final mainLower = widget.mainLabel.toLowerCase();
+
     if (mainLower == 'normal') {
       announcement += "Lung sounds appear normal. No abnormalities detected.";
+
+      // ✅ Bot: Celebration
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
+
+      await _arduino.updateLCD('All Clear!', 'Healthy Lungs');
     } else if (mainLower == 'crackle') {
       final crackleVal = widget.percentages['crackle'] ?? 0.0;
+
       if (crackleVal >= 70) {
         announcement +=
             "Significant crackles detected. These may indicate fluid in the lungs. Medical consultation recommended.";
+
+        await _arduino.updateLCD('High Crackle', 'Urgent Care');
+        await _arduino.setBotPosition(head: -25, handL: 90, handR: 0);
       } else {
         announcement +=
             "Crackles detected. Consider medical evaluation for proper diagnosis.";
+
+        await _arduino.updateLCD('Crackles', 'Consult Doctor');
       }
     } else if (mainLower == 'wheeze') {
       final wheezeVal = widget.percentages['wheeze'] ?? 0.0;
+
       if (wheezeVal >= 70) {
         announcement +=
             "Significant wheezing detected. This may indicate airway obstruction. Medical consultation recommended.";
+
+        await _arduino.updateLCD('High Wheeze', 'Urgent Care');
+        await _arduino.setBotPosition(head: 25, handL: 0, handR: 90);
       } else {
         announcement +=
             "Wheezing detected. Consider medical evaluation for proper diagnosis.";
+
+        await _arduino.updateLCD('Wheezes', 'Consult Doctor');
       }
     } else if (mainLower == 'both') {
       announcement +=
           "Both crackles and wheezes detected. This indicates possible respiratory complications. Medical consultation strongly recommended.";
+
+      await _arduino.updateLCD('BOTH ISSUES!', 'See Doctor NOW');
+      // Bot maintains both hands up warning
     }
 
     await _speak(announcement);
@@ -112,7 +206,8 @@ class _ResultStethoscopePageState extends State<ResultStethoscopePage> {
 
   @override
   void dispose() {
-    _tts.stop(); // ✅ UPDATED: Use TtsManager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
@@ -127,7 +222,6 @@ class _ResultStethoscopePageState extends State<ResultStethoscopePage> {
       _tapCount = 0;
       _firstTapAt = null;
 
-      // ✅ Speak before navigating
       _speak("Opening prediction logs");
 
       Navigator.of(context).push(
@@ -303,9 +397,17 @@ class _ResultStethoscopePageState extends State<ResultStethoscopePage> {
 
                         const SizedBox(height: 16),
                         ElevatedButton(
-                          onPressed: () {
-                            // ✅ Speak before navigating back
+                          onPressed: () async {
+                            // ✅ Arduino feedback before exit
+                            await _arduino.updateLCD('Returning', 'Home...');
+                            await _arduino.gestureReset();
+
                             _speak("Returning to home screen");
+
+                            await Future.delayed(
+                              const Duration(milliseconds: 500),
+                            );
+
                             Navigator.of(
                               context,
                             ).popUntil((route) => route.isFirst);
@@ -319,7 +421,6 @@ class _ResultStethoscopePageState extends State<ResultStethoscopePage> {
               ),
             ),
 
-            // ✅ UPDATED: Speaking indicator using TtsManager
             if (_tts.isSpeaking)
               Positioned(
                 top: 20,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'tts_manager.dart'; // ✅ REPLACED WITH TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ IMPORT ARDUINO
 import 'scale.dart';
 import 'xray_upload.dart';
 import 'xray_picture.dart';
@@ -12,26 +13,38 @@ class ChestXRayPage extends StatefulWidget {
 }
 
 class _ChestXRayPageState extends State<ChestXRayPage> {
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ ARDUINO
 
   @override
   void initState() {
     super.initState();
-    _initTts(); // ✅ Initialize TTS
+    _initTts();
+    _initArduino(); // ✅ ARDUINO INIT
   }
 
-  // ✅ Initialize TtsManager and speak welcome message
+  // ✅ ARDUINO INITIALIZATION
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Update LCD
+    await _arduino.updateLCD('X-Ray Mode', 'Select Option');
+
+    // Bot: Presenting options gesture (both hands partially raised)
+    await _arduino.setBotPosition(head: 0, handL: 60, handR: 60);
+
+    await Future.delayed(const Duration(milliseconds: 1200));
+    await _arduino.gestureReset();
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
 
-      // ✅ Speak welcome message
       await Future.delayed(const Duration(milliseconds: 300));
       await _speak(
         "Choose how to analyze your chest X-ray. You can upload an image or take a picture",
@@ -41,7 +54,6 @@ class _ChestXRayPageState extends State<ChestXRayPage> {
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -56,49 +68,44 @@ class _ChestXRayPageState extends State<ChestXRayPage> {
 
   @override
   void dispose() {
-    _tts.stop(); // ✅ STOP TTS WHEN PAGE DISPOSES
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ ARDUINO CLEANUP
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // --- Screen-specific constants ---
-    // Lungs AI Image (top-left)
+    // Screen-specific constants
     const lungsWidth = 120.0;
     const lungsHeight = 160.0;
     const lungsLeft = 0.0;
     const lungsTop = 0.0;
 
-    // Title text
     const titleFontSize = 60.0;
     const titleLeft = 180.0;
     const titleTop = 30.0;
     const titleColor = Color(0xFF0d3b66);
 
-    // Main X-ray image (left-central)
     const xrayWidth = 400.0;
     const xrayHeight = 500.0;
     const xrayLeft = 50.0;
     const xrayTop = 200.0;
     const xrayBorderRadius = 40.0;
 
-    // Buttons
     const buttonWidth = 600.0;
     const buttonHeight = 180.0;
     const buttonBorderRadius = 90.0;
-    const buttonBackgroundColor = Color(0xFF4B0082); // dark purple
+    const buttonBackgroundColor = Color(0xFF4B0082);
     const buttonTextSize = 32.0;
     const buttonTextColor = Colors.white;
     const iconSize = 130.0;
     const iconTextSpacing = 24.0;
 
-    // Button 1
     const btn1Left = 650.0;
     const btn1Top = 220.0;
     const btn1Icon = 'assets/upload_icon.png';
     const btn1Text = "Upload Your Chest X-Ray for AI Analyzation";
 
-    // Button 2
     const btn2Left = 650.0;
     const btn2Top = 500.0;
     const btn2Icon = 'assets/camera_icon.png';
@@ -170,8 +177,15 @@ class _ChestXRayPageState extends State<ChestXRayPage> {
                   ),
                   elevation: 8,
                 ),
-                onPressed: () {
-                  // ✅ Speak before navigating
+                onPressed: () async {
+                  // ✅ ARDUINO: Upload selected
+                  await _arduino.updateLCD('Upload Mode', 'Selected');
+
+                  // ✅ Bot: Point to upload option (left)
+                  await _arduino.setBotPosition(head: -30, handL: 90, handR: 0);
+
+                  await Future.delayed(const Duration(milliseconds: 600));
+
                   _speak("Upload chest X-ray");
 
                   Navigator.of(context).push(
@@ -221,8 +235,15 @@ class _ChestXRayPageState extends State<ChestXRayPage> {
                   ),
                   elevation: 8,
                 ),
-                onPressed: () {
-                  // ✅ Speak before navigating
+                onPressed: () async {
+                  // ✅ ARDUINO: Picture mode selected
+                  await _arduino.updateLCD('Camera Mode', 'Selected');
+
+                  // ✅ Bot: Point to picture option (right)
+                  await _arduino.setBotPosition(head: 30, handL: 0, handR: 90);
+
+                  await Future.delayed(const Duration(milliseconds: 600));
+
                   _speak("Take a picture of chest X-ray");
 
                   Navigator.of(context).push(
@@ -255,7 +276,7 @@ class _ChestXRayPageState extends State<ChestXRayPage> {
             ),
           ),
 
-          // ✅ ADD: Speaking indicator
+          // Speaking indicator
           if (_tts.isSpeaking)
             Positioned(
               top: 20,

@@ -3,7 +3,8 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
-import 'tts_manager.dart'; // ✅ IMPORT TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 import 'next_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -23,8 +24,8 @@ class _SplashScreenState extends State<SplashScreen>
   late final AnimationController _finalParticlesController;
   late final AnimationController _checkScaleController;
 
-  // ✅ TTS Engine (using TtsManager)
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   final Random _random = Random();
 
@@ -38,11 +39,11 @@ class _SplashScreenState extends State<SplashScreen>
   final List<_Particle> _particles = [];
 
   @override
-  @override
   void initState() {
     super.initState();
 
     _initTts();
+    _initArduino(); // ✅ NEW: Initialize Arduino
 
     _rocketController = AnimationController(
       vsync: this,
@@ -70,7 +71,6 @@ class _SplashScreenState extends State<SplashScreen>
     );
 
     _checkScaleController = AnimationController(
-      // 🧩 FIXED
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
@@ -86,7 +86,17 @@ class _SplashScreenState extends State<SplashScreen>
     _startSequence();
   }
 
-  // ✅ Initialize TtsManager
+  // ✅ NEW: Initialize Arduino
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // Initial LCD: System booting
+    await _arduino.updateLCD('PneumoAI', 'Booting...');
+
+    // Bot: Idle/waiting position
+    await _arduino.setBotPosition(head: 0, handL: 0, handR: 0);
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
@@ -96,7 +106,6 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -109,6 +118,7 @@ class _SplashScreenState extends State<SplashScreen>
     }
   }
 
+  // ✅ UPDATED: Sequence with Arduino animations
   Future<void> _startSequence() async {
     if (!mounted) return;
 
@@ -118,11 +128,20 @@ class _SplashScreenState extends State<SplashScreen>
       _engineInitializedTextShown = false;
     });
 
-    // ✅ Speak: "Activating AI Engine"
+    // ✅ LCD: Activating
+    await _arduino.updateLCD('Activating', 'AI Engine...');
+
+    // ✅ Bot: Gradual activation (hands slowly rise)
+    await _arduino.setBotPosition(head: 0, handL: 30, handR: 30);
+
     await _speak("Activating AI Engine");
     await Future.delayed(const Duration(milliseconds: 500));
 
     _shakeController.repeat(reverse: true);
+
+    // ✅ Bot: Processing gesture (hands at mid-height)
+    await _arduino.setBotPosition(head: 10, handL: 50, handR: 50);
+
     await Future.delayed(const Duration(seconds: 10));
     if (!mounted) return;
 
@@ -132,7 +151,12 @@ class _SplashScreenState extends State<SplashScreen>
     });
     _shakeController.stop(canceled: false);
 
-    // ✅ Speak: "AI Engine Initialized Successfully"
+    // ✅ LCD: AI Initialized
+    await _arduino.updateLCD('AI Engine', 'Initialized!');
+
+    // ✅ Bot: Success gesture (hands up)
+    await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+
     await _speak("AI Engine Initialized Successfully");
 
     await Future.delayed(const Duration(seconds: 3));
@@ -144,12 +168,17 @@ class _SplashScreenState extends State<SplashScreen>
       _engineInitializedTextShown = false;
     });
 
-    // ✅ Speak: "Comparing Audio Samples"
+    // ✅ LCD: Comparing samples
+    await _arduino.updateLCD('Comparing', 'Audio Samples');
+
+    // ✅ Bot: Reset to analyzing position
+    await _arduino.setBotPosition(head: 15, handL: 60, handR: 60);
+
     await _speak("Comparing Audio Samples");
     await Future.delayed(const Duration(milliseconds: 800));
 
-    // ✅ Speak analysis phrases during stage 1
-    _speakAnalysisPhrases();
+    // ✅ Speak and animate during stage 1
+    _speakAndAnimateAnalysis();
 
     await Future.delayed(const Duration(seconds: 10));
     if (!mounted) return;
@@ -164,7 +193,12 @@ class _SplashScreenState extends State<SplashScreen>
     _finalParticlesController.repeat();
     _checkScaleController.forward(from: 0.0);
 
-    // ✅ Speak: "PneumoAI Initialized Successfully"
+    // ✅ LCD: System Ready
+    await _arduino.updateLCD('PneumoAI', 'Ready!');
+
+    // ✅ Bot: Celebration (both hands up)
+    await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+
     await Future.delayed(const Duration(milliseconds: 600));
     await _speak(
       "PneumoAI Initialized Successfully. Systems nominal. Ready to analyze.",
@@ -179,10 +213,12 @@ class _SplashScreenState extends State<SplashScreen>
     _checkScaleController.reset();
     _particles.clear();
 
-    // Stop any ongoing speech
     await _tts.stop();
 
-    // Navigate
+    // ✅ LCD: Entering app
+    await _arduino.updateLCD('Loading', 'Application...');
+    await Future.delayed(const Duration(milliseconds: 800));
+
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
@@ -190,17 +226,35 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  // ✅ Speak analysis phrases during stage 1
-  Future<void> _speakAnalysisPhrases() async {
+  // ✅ UPDATED: Speak and animate during analysis
+  Future<void> _speakAndAnimateAnalysis() async {
     final phrases = [
       "Detecting crackles and wheezes",
       "Filtering background noise",
       "Analyzing spectral fingerprints",
     ];
 
+    final lcdMessages = [
+      ['Detecting', 'Crackles...'],
+      ['Filtering', 'Noise...'],
+      ['Analyzing', 'Patterns...'],
+    ];
+
     for (int i = 0; i < phrases.length && _stage == 1; i++) {
       await Future.delayed(const Duration(milliseconds: 2500));
       if (_stage == 1 && mounted) {
+        // Update LCD
+        await _arduino.updateLCD(lcdMessages[i][0], lcdMessages[i][1]);
+
+        // Bot: Subtle movements during analysis
+        int headAngle = 10 + (i % 2) * 10;
+        int handAngle = 55 + (i % 3) * 10;
+        await _arduino.setBotPosition(
+          head: headAngle,
+          handL: handAngle,
+          handR: handAngle,
+        );
+
         await _speak(phrases[i]);
       }
     }
@@ -215,8 +269,8 @@ class _SplashScreenState extends State<SplashScreen>
     _finalParticlesController.dispose();
     _checkScaleController.dispose();
 
-    // ✅ Clean up TTS
     _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
 
     super.dispose();
   }
@@ -609,6 +663,10 @@ class _SplashScreenState extends State<SplashScreen>
     Colors.yellowAccent,
   ];
 }
+
+// ==================== Helper Classes (unchanged) ====================
+// [Keep all the existing helper classes: WaveformAnimation, WaveformPainter,
+//  SpectrumBars, SpectrumPainter, _Rocket, _Particle, _ParticlePainter]
 
 // ==================== Helper Classes ====================
 

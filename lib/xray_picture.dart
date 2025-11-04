@@ -5,7 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:async';
 import 'loading_xray.dart';
 import 'scale.dart';
-import 'tts_manager.dart'; // ✅ NEW: Import TTS Manager
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 
 class XRayPicturePage extends StatefulWidget {
   const XRayPicturePage({super.key});
@@ -20,21 +21,33 @@ class _XRayPicturePageState extends State<XRayPicturePage> {
   bool _showError = false;
 
   final ImagePicker _picker = ImagePicker();
-
-  // ✅ UPDATED: Use TTS Manager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   @override
   void initState() {
     super.initState();
     _initTtsAndSpeak();
+    _initArduino(); // ✅ NEW: Initialize Arduino
   }
 
-  // ✅ UPDATED: Simplified TTS initialization
+  // ✅ NEW: Initialize Arduino on page load
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Update LCD
+    await _arduino.updateLCD('Camera Mode', 'Ready');
+
+    // Bot points to camera icon
+    await _arduino.setBotPosition(head: 15, handL: 70, handR: 0);
+
+    await Future.delayed(const Duration(milliseconds: 1000));
+    await _arduino.gestureReset();
+  }
+
   Future<void> _initTtsAndSpeak() async {
     await _tts.initialize();
 
-    // Listen to TTS state changes to update UI
     _tts.addListener(() {
       if (mounted) setState(() {});
     });
@@ -45,13 +58,20 @@ class _XRayPicturePageState extends State<XRayPicturePage> {
 
   @override
   void dispose() {
-    _tts.stop(); // ✅ UPDATED: Use TTS Manager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
-  // Camera Capture
+  // ✅ UPDATED: Camera Capture with Arduino feedback
   Future<void> _takePicture() async {
     try {
+      // LCD: Opening camera
+      await _arduino.updateLCD('Opening', 'Camera...');
+
+      // Bot: Ready to photograph gesture
+      await _arduino.setBotPosition(head: 0, handL: 45, handR: 45);
+
       final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
 
       if (photo != null) {
@@ -60,27 +80,64 @@ class _XRayPicturePageState extends State<XRayPicturePage> {
           _takenPicturePath = photo.path;
         });
 
-        // ✅ UPDATED: Use TTS Manager speak
+        // ✅ LCD: Picture captured
+        await _arduino.updateLCD('Photo Captured', 'Successfully!');
+
+        // ✅ Bot: Success celebration
+        await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+
+        await Future.delayed(const Duration(milliseconds: 1000));
+        await _arduino.gestureReset();
+
         await _tts.speak(
           "Picture captured successfully. You can now proceed to AI analysis",
         );
+
+        // Update LCD after speech
+        await Future.delayed(const Duration(seconds: 2));
+        await _arduino.updateLCD('Photo Ready', 'Tap Analyze');
+      } else {
+        // User cancelled camera
+        await _arduino.updateLCD('Camera', 'Cancelled');
+        await _arduino.gestureReset();
+
+        await Future.delayed(const Duration(seconds: 1));
+        await _arduino.updateLCD('Camera Mode', 'Ready');
       }
     } on PlatformException catch (e) {
       debugPrint("Camera error: $e");
 
-      // ✅ UPDATED: Use TTS Manager speak
+      // ✅ LCD: Camera error
+      await _arduino.updateLCD('Camera Error', 'Check Permissions');
+
+      // ✅ Bot: Concerned gesture
+      await _arduino.setBotPosition(head: -35, handL: 0, handR: 0);
+
       await _tts.speak("Failed to open camera. Please check permissions");
+
+      await Future.delayed(const Duration(seconds: 2));
+      await _arduino.updateLCD('Camera Mode', 'Ready');
+      await _arduino.gestureReset();
     }
   }
 
-  // Navigate to Loading + Analysis
-  void _analyzePicture(String resultType) {
+  // ✅ UPDATED: Navigate to Loading + Analysis with Arduino feedback
+  void _analyzePicture(String resultType) async {
     if (_takenPictureName == null || _takenPicturePath == null) {
       setState(() {
         _showError = true;
       });
 
-      // ✅ UPDATED: Use TTS Manager speak
+      // ✅ LCD: Error - No picture
+      await _arduino.updateLCD('ERROR!', 'Take Photo First');
+
+      // ✅ Bot: Shake head gesture (disapproval)
+      await _arduino.setBotPosition(head: -45, handL: 0, handR: 0);
+      await Future.delayed(const Duration(milliseconds: 300));
+      await _arduino.setBotPosition(head: 45);
+      await Future.delayed(const Duration(milliseconds: 300));
+      await _arduino.setBotPosition(head: 0);
+
       _tts.speak("Please take a picture of your chest X-ray first");
 
       Timer(const Duration(seconds: 1), () {
@@ -88,13 +145,25 @@ class _XRayPicturePageState extends State<XRayPicturePage> {
           setState(() {
             _showError = false;
           });
+          _arduino.updateLCD('Camera Mode', 'Ready');
         }
       });
       return;
     }
 
-    // ✅ UPDATED: Use TTS Manager speak
+    // ✅ LCD: Starting analysis
+    await _arduino.updateLCD('Analyzing', 'X-Ray Photo...');
+
+    // ✅ Bot: Processing gesture
+    await _arduino.setBotPosition(head: 25, handL: 80, handR: 80);
+
+    await Future.delayed(const Duration(milliseconds: 700));
+    await _arduino.gestureReset();
+
     _tts.speak("Starting AI analysis of your chest X-ray");
+
+    // Small delay for effect
+    await Future.delayed(const Duration(milliseconds: 400));
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -328,10 +397,7 @@ class _XRayPicturePageState extends State<XRayPicturePage> {
                         Expanded(
                           child: GestureDetector(
                             behavior: HitTestBehavior.translucent,
-                            onTap: () {
-                              // Let the actual prediction determine the result type
-                              _analyzePicture("prediction");
-                            },
+                            onTap: () => _analyzePicture("prediction"),
                           ),
                         ),
                       ],
@@ -342,7 +408,7 @@ class _XRayPicturePageState extends State<XRayPicturePage> {
             ),
           ),
 
-          // ✅ UPDATED: Speaking indicator using TTS Manager
+          // ✅ Speaking indicator using TTS Manager
           if (_tts.isSpeaking)
             Positioned(
               top: 20,

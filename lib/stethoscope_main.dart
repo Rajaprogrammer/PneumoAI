@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'tts_manager.dart'; // ✅ IMPORT TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 import 'live_recording.dart';
 import 'stethoscope_upload.dart';
 
@@ -11,21 +12,34 @@ class StethoscopeMainPage extends StatefulWidget {
 }
 
 class _StethoscopeMainPageState extends State<StethoscopeMainPage> {
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   @override
   void initState() {
     super.initState();
     _initTtsAndSpeak();
+    _initArduino(); // ✅ NEW: Initialize Arduino
   }
 
-  // ✅ UPDATED: Initialize TtsManager and speak welcome message
+  // ✅ NEW: Initialize Arduino on page load
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Update LCD
+    await _arduino.updateLCD('Lung Sound', 'Analysis Mode');
+
+    // Bot: Presenting options gesture (both hands partially raised)
+    await _arduino.setBotPosition(head: 0, handL: 60, handR: 60);
+
+    await Future.delayed(const Duration(milliseconds: 1200));
+    await _arduino.gestureReset();
+  }
+
   Future<void> _initTtsAndSpeak() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
@@ -39,17 +53,35 @@ class _StethoscopeMainPageState extends State<StethoscopeMainPage> {
     }
   }
 
-  // ✅ Handle button navigation with TTS feedback
-  void _navigateToUpload() {
+  // ✅ UPDATED: Navigation with Arduino feedback
+  void _navigateToUpload() async {
+    // LCD: Upload selected
+    await _arduino.updateLCD('Upload Mode', 'Selected');
+
+    // Bot: Point to upload option (left side)
+    await _arduino.setBotPosition(head: -30, handL: 90, handR: 0);
+
+    await Future.delayed(const Duration(milliseconds: 600));
+
     _tts.speak("Upload lung sounds");
+
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const StethoscopeUploadPage()),
     );
   }
 
-  void _navigateToRecording() {
+  void _navigateToRecording() async {
+    // LCD: Record selected
+    await _arduino.updateLCD('Record Mode', 'Selected');
+
+    // Bot: Point to record option (right side)
+    await _arduino.setBotPosition(head: 30, handL: 0, handR: 90);
+
+    await Future.delayed(const Duration(milliseconds: 600));
+
     _tts.speak("Record live audio");
+
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const LiveRecordingPage()),
@@ -58,7 +90,8 @@ class _StethoscopeMainPageState extends State<StethoscopeMainPage> {
 
   @override
   void dispose() {
-    _tts.stop(); // ✅ UPDATED: Use TtsManager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
@@ -225,7 +258,7 @@ class _StethoscopeMainPageState extends State<StethoscopeMainPage> {
             ),
           ),
 
-          // ✅ UPDATED: Speaking indicator using TtsManager
+          // ✅ Speaking indicator using TtsManager
           if (_tts.isSpeaking)
             Positioned(
               top: 20,

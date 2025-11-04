@@ -42,6 +42,7 @@ dependencies:
   local_auth: ^2.1.7
   pattern_lock: ^2.0.0
   permission_handler: ^11.0.1
+  http: ^1.1.0  # Add this line
   # Removed tflite_flutter due to build incompatibility on this SDK
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

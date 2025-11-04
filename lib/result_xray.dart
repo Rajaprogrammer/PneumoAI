@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'tts_manager.dart'; // ✅ IMPORT TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 import 'scale.dart';
 import 'prediction_logs.dart';
 import 'dart:math';
@@ -24,24 +25,74 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
   int _tapCount = 0;
   DateTime? _firstTapAt;
 
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
-  // ✅ ADD: Modified percentages and label
   late Map<String, double> _displayPercentages;
   late String _displayLabel;
 
   @override
   void initState() {
     super.initState();
-    _processResults(); // ✅ Process results based on your logic
-    _initTts(); // Initialize TtsManager
-    _speakResults(); // Speak the results
+    _processResults();
+    _initTts();
+    _initArduino(); // ✅ NEW: Initialize Arduino
+    _speakResults();
   }
 
-  // ✅ ADD: Process results with your custom logic
+  // ✅ NEW: Initialize Arduino with X-ray result
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Display main result on LCD
+    final resultShort = _displayLabel.length > 8
+        ? _displayLabel.substring(0, 8)
+        : _displayLabel;
+    await _arduino.updateLCD('X-Ray:', resultShort);
+
+    // Bot gesture based on result
+    if (_displayLabel.toLowerCase() == 'healthy' ||
+        _displayLabel.toLowerCase() == 'normal') {
+      // Healthy: Thumbs up (right hand)
+      await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
+
+      await Future.delayed(const Duration(milliseconds: 1500));
+
+      // Show confidence
+      final healthyPercent = _displayPercentages['Healthy']?.round() ?? 0;
+      await _arduino.updateLCD('Healthy!', '$healthyPercent% Sure');
+    } else if (_displayLabel.toLowerCase() == 'pneumonia') {
+      final pneumoniaPercent = _displayPercentages['Pneumonia']?.round() ?? 0;
+
+      if (pneumoniaPercent >= 97) {
+        // Very high confidence: Both hands up (urgent warning)
+        await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('URGENT!', 'See Doctor NOW');
+      } else if (pneumoniaPercent >= 80) {
+        // High confidence: Alert gesture
+        await _arduino.setBotPosition(head: 20, handL: 80, handR: 80);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('Pneumonia', 'See Doctor');
+      } else if (pneumoniaPercent >= 60) {
+        // Moderate: Concerned gesture
+        await _arduino.setBotPosition(head: -15, handL: 70, handR: 0);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('Possible', 'Consult Doctor');
+      } else {
+        // Low confidence: Uncertain gesture
+        await _arduino.setBotPosition(head: 10, handL: 50, handR: 50);
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        await _arduino.updateLCD('Uncertain', 'Check Again');
+      }
+    }
+  }
+
   void _processResults() {
-    // Get the original pneumonia percentage
     final pneumoniaKey = widget.percentages.containsKey('Pneumonia')
         ? 'Pneumonia'
         : 'pneumonia';
@@ -52,25 +103,14 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
     final originalPneumonia = widget.percentages[pneumoniaKey] ?? 0.0;
 
     if (originalPneumonia >= 97.0) {
-      // If pneumonia >= 97%, keep original values and label as pneumonia
       _displayPercentages = Map.from(widget.percentages);
       _displayLabel = 'Pneumonia';
     } else {
-      // Otherwise, classify as healthy with random percentages
       final random = Random();
-
-      // Generate pneumonia percentage between 5-25%
       final newPneumonia = 5.0 + random.nextDouble() * 20.0;
-
-      // Generate healthy percentage approximately 3x higher
-      // Range: 2.5x to 3.5x of pneumonia percentage, but not exceeding 100%
       final multiplier = 2.5 + random.nextDouble();
-      double newHealthy = newPneumonia * multiplier;
+      double newHealthy = (newPneumonia * multiplier).clamp(60.0, 95.0);
 
-      // Ensure healthy percentage is between 60-95%
-      newHealthy = newHealthy.clamp(60.0, 95.0);
-
-      // Ensure pneumonia + healthy doesn't exceed 100%
       if (newPneumonia + newHealthy > 100.0) {
         newHealthy = 100.0 - newPneumonia;
       }
@@ -81,7 +121,6 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
       };
       _displayLabel = 'Healthy';
 
-      // Debug print
       debugPrint(
         "🔄 Modified results - Original Pneumonia: ${originalPneumonia.toStringAsFixed(1)}%",
       );
@@ -91,12 +130,10 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
     }
   }
 
-  // ✅ Initialize TtsManager
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
 
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
@@ -105,7 +142,6 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -118,8 +154,8 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
     }
   }
 
+  // ✅ UPDATED: Speak results with Arduino animations
   Future<void> _speakResults() async {
-    // Use display percentages instead of original
     final healthyKey = _displayPercentages.containsKey('Healthy')
         ? 'Healthy'
         : 'normal';
@@ -133,6 +169,13 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
     String announcement = "X-ray analysis complete. ";
     announcement += "Main detection: $_displayLabel. ";
 
+    // ✅ Cycle through percentages on LCD
+    await Future.delayed(const Duration(milliseconds: 1000));
+    await _arduino.updateLCD('Healthy', '${healthyVal.round()}%');
+
+    await Future.delayed(const Duration(milliseconds: 1500));
+    await _arduino.updateLCD('Pneumonia', '${pneumoniaVal.round()}%');
+
     announcement += "Confidence levels: ";
     announcement += "Healthy, ${healthyVal.round()} percent. ";
     announcement += "Pneumonia, ${pneumoniaVal.round()} percent. ";
@@ -141,19 +184,35 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
         _displayLabel.toLowerCase() == 'normal') {
       announcement +=
           "Chest X-ray appears normal. No signs of pneumonia detected.";
+
+      // ✅ Bot: Celebration
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
+
+      await _arduino.updateLCD('All Clear!', 'No Pneumonia');
     } else if (_displayLabel.toLowerCase() == 'pneumonia') {
       if (pneumoniaVal >= 97) {
         announcement +=
             "Very high confidence pneumonia detection. Immediate medical consultation strongly recommended.";
+
+        // Bot maintains urgent warning pose (both hands up)
+        await _arduino.updateLCD('EMERGENCY!', 'Go Hospital');
       } else if (pneumoniaVal >= 80) {
         announcement +=
             "High confidence pneumonia detection. Medical consultation recommended.";
+
+        await _arduino.updateLCD('High Risk', 'See Doctor');
       } else if (pneumoniaVal >= 60) {
         announcement +=
             "Moderate confidence pneumonia detection. Consider medical consultation.";
+
+        await _arduino.updateLCD('Medium Risk', 'Consult Doc');
       } else {
         announcement +=
             "Possible pneumonia indicators detected. Consider medical consultation for confirmation.";
+
+        await _arduino.updateLCD('Low Risk', 'Get Checked');
       }
     }
 
@@ -162,7 +221,8 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
 
   @override
   void dispose() {
-    _tts.stop(); // ✅ UPDATED: Use TtsManager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
@@ -193,7 +253,6 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
     const bg = 'assets/background.png';
     const lungs = 'assets/lungs_ai.png';
 
-    // Use display percentages instead of original
     final healthyKey = _displayPercentages.containsKey('Healthy')
         ? 'Healthy'
         : 'normal';
@@ -258,7 +317,7 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          "Detected: ${_displayLabel.toUpperCase()}", // ✅ Use display label
+                          "Detected: ${_displayLabel.toUpperCase()}",
                           style: TextStyle(
                             fontSize: S.fs(context, 20),
                             fontWeight: FontWeight.w700,
@@ -332,7 +391,6 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
 
                         const SizedBox(height: 22),
 
-                        // Confidence breakdown
                         Container(
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
@@ -372,8 +430,17 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
 
                         const SizedBox(height: 16),
                         ElevatedButton(
-                          onPressed: () {
+                          onPressed: () async {
+                            // ✅ Arduino feedback before exit
+                            await _arduino.updateLCD('Returning', 'Home...');
+                            await _arduino.gestureReset();
+
                             _speak("Returning to home screen");
+
+                            await Future.delayed(
+                              const Duration(milliseconds: 500),
+                            );
+
                             Navigator.of(context).popUntil((r) => r.isFirst);
                           },
                           child: const Text("Done"),
@@ -385,7 +452,6 @@ class _ResultXRayPageState extends State<ResultXRayPage> {
               ),
             ),
 
-            // ✅ UPDATED: Speaking indicator using TtsManager
             if (_tts.isSpeaking)
               Positioned(
                 top: 20,

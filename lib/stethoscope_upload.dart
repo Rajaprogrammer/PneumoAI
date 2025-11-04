@@ -1,11 +1,11 @@
 // lib/stethoscope_upload.dart
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-// import 'package:flutter_tts/flutter_tts.dart'; // ❌ REMOVED: Using TtsManager instead
 import 'dart:async';
 import 'dart:math';
 import 'stethoscope_upload_loading.dart';
-import 'tts_manager.dart'; // ✅ NEW: Import TTS Manager
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 
 class StethoscopeUploadPage extends StatefulWidget {
   const StethoscopeUploadPage({super.key});
@@ -20,12 +20,8 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
   bool _showError = false;
   final _random = Random();
 
-  // ❌ REMOVED: FlutterTts
-  // late FlutterTts _flutterTts;
-  // bool _isSpeaking = false;
-
-  // ✅ UPDATED: Use TTS Manager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   // ✅ Responsive mode tracking
   int _tapCount = 0;
@@ -36,18 +32,30 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
   static const double _referenceWidth = 2000.0;
   static const double _referenceHeight = 1200.0;
 
-  // ✅ UPDATED: Initialize TTS
   @override
   void initState() {
     super.initState();
     _initTtsAndSpeak();
+    _initArduino(); // ✅ NEW: Initialize Arduino
   }
 
-  // ✅ UPDATED: Simplified TTS initialization using TtsManager
+  // ✅ NEW: Initialize Arduino on page load
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Update LCD
+    await _arduino.updateLCD('Lung Sound', 'Upload Ready');
+
+    // Bot gesture: Listening pose
+    await _arduino.setBotPosition(head: 10, handL: 50, handR: 50);
+
+    await Future.delayed(const Duration(milliseconds: 1000));
+    await _arduino.gestureReset();
+  }
+
   Future<void> _initTtsAndSpeak() async {
     await _tts.initialize();
 
-    // Listen to TTS state changes to update UI
     _tts.addListener(() {
       if (mounted) setState(() {});
     });
@@ -56,21 +64,15 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
     await _tts.speak("Upload your lung sounds for AI analysis");
   }
 
-  // ❌ REMOVED: Separate _speak method (now using _tts.speak)
-  // Future<void> _speak(String text) async {
-  //   try {
-  //     if (_isSpeaking) {
-  //       await _flutterTts.stop();
-  //     }
-  //     debugPrint("🔊 Speaking: $text");
-  //     await _flutterTts.speak(text);
-  //   } catch (e) {
-  //     debugPrint("❌ TTS speak error: $e");
-  //   }
-  // }
-
+  // ✅ UPDATED: Upload with Arduino feedback
   Future<void> _uploadFile() async {
     try {
+      // LCD: Waiting for file selection
+      await _arduino.updateLCD('Select Audio', 'File...');
+
+      // Bot: Attentive gesture
+      await _arduino.setBotPosition(head: 15, handL: 60, handR: 0);
+
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.audio,
       );
@@ -84,35 +86,87 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
         debugPrint("Selected file: $_uploadedFileName");
         debugPrint("Full path: $_uploadedFilePath");
 
-        // ✅ UPDATED: Use TTS Manager speak
+        // ✅ LCD: File uploaded
+        await _arduino.updateLCD('Audio Uploaded', 'Successfully!');
+
+        // ✅ Bot: Success - right hand up
+        await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
+
+        await Future.delayed(const Duration(milliseconds: 800));
+        await _arduino.gestureReset();
+
         await _tts.speak(
           "Audio file uploaded successfully. You can now proceed to AI analysis",
         );
+
+        // Update LCD after speech
+        await Future.delayed(const Duration(seconds: 2));
+        await _arduino.updateLCD('Audio Ready', 'Tap Analyze');
+      } else {
+        // User cancelled
+        await _arduino.updateLCD('Upload', 'Cancelled');
+        await _arduino.gestureReset();
+
+        await Future.delayed(const Duration(seconds: 1));
+        await _arduino.updateLCD('Lung Sound', 'Upload Ready');
       }
     } catch (e) {
       debugPrint("File picker error: $e");
+
+      // ✅ LCD: Error
+      await _arduino.updateLCD('Upload Error', 'Try Again');
+      await _arduino.setBotPosition(head: -30, handL: 0, handR: 0);
+
+      await Future.delayed(const Duration(seconds: 1));
+      await _arduino.updateLCD('Lung Sound', 'Upload Ready');
+      await _arduino.gestureReset();
     }
   }
 
-  void _showTransientError() {
+  // ✅ UPDATED: Error with Arduino feedback
+  void _showTransientError() async {
     setState(() => _showError = true);
 
-    // ✅ UPDATED: Use TTS Manager speak
+    // ✅ LCD: Error message
+    await _arduino.updateLCD('ERROR!', 'Upload Audio');
+
+    // ✅ Bot: Shake head (disapproval)
+    await _arduino.setBotPosition(head: -40, handL: 0, handR: 0);
+    await Future.delayed(const Duration(milliseconds: 250));
+    await _arduino.setBotPosition(head: 40);
+    await Future.delayed(const Duration(milliseconds: 250));
+    await _arduino.setBotPosition(head: 0);
+
     _tts.speak("Please upload a lung sound audio file first");
 
     Timer(const Duration(milliseconds: 900), () {
-      if (mounted) setState(() => _showError = false);
+      if (mounted) {
+        setState(() => _showError = false);
+        _arduino.updateLCD('Lung Sound', 'Upload Ready');
+      }
     });
   }
 
-  void _startAnalysisByHalfTap(bool leftHalf) {
+  // ✅ UPDATED: Analysis with Arduino feedback
+  void _startAnalysisByHalfTap(bool leftHalf) async {
     if (_uploadedFilePath == null) {
       _showTransientError();
       return;
     }
 
-    // ✅ UPDATED: Use TTS Manager speak
+    // ✅ LCD: Starting analysis
+    await _arduino.updateLCD('Analyzing', 'Lung Sounds...');
+
+    // ✅ Bot: Processing gesture (both hands mid-height)
+    await _arduino.setBotPosition(head: 20, handL: 75, handR: 75);
+
+    await Future.delayed(const Duration(milliseconds: 600));
+    await _arduino.gestureReset();
+
     _tts.speak("Starting AI analysis of your lung sounds");
+
+    // Small delay for effect
+    await Future.delayed(const Duration(milliseconds: 400));
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -137,7 +191,6 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
         _responsiveMode = !_responsiveMode;
         _tapCount = 0;
 
-        // ✅ UPDATED: Use TTS Manager speak
         _tts.speak(
           _responsiveMode
               ? 'Responsive mode enabled'
@@ -179,7 +232,8 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
   @override
   void dispose() {
     _tapResetTimer?.cancel();
-    _tts.stop(); // ✅ UPDATED: Use TTS Manager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
@@ -229,7 +283,6 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
 
     return Scaffold(
       body: GestureDetector(
-        // ✅ Detect taps anywhere on screen
         onTap: _handleTap,
         behavior: HitTestBehavior.translucent,
         child: Stack(
@@ -465,7 +518,7 @@ class _StethoscopeUploadPageState extends State<StethoscopeUploadPage> {
               ),
             ),
 
-            // ✅ UPDATED: Speaking indicator using TTS Manager
+            // ✅ Speaking indicator using TTS Manager
             if (_tts.isSpeaking)
               Positioned(
                 top: 20,

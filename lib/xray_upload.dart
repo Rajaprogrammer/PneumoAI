@@ -5,7 +5,8 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:async';
 import 'loading_xray.dart';
 import 'scale.dart';
-import 'tts_manager.dart'; // ✅ NEW: Import TTS Manager
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ NEW: Import Arduino Service
 
 class XRayUploadPage extends StatefulWidget {
   const XRayUploadPage({super.key});
@@ -19,20 +20,33 @@ class _XRayUploadPageState extends State<XRayUploadPage> {
   String? _uploadedFilePath;
   bool _showError = false;
 
-  // ✅ UPDATED: Use TTS Manager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ NEW: Arduino Service
 
   @override
   void initState() {
     super.initState();
     _initTtsAndSpeak();
+    _initArduino(); // ✅ NEW: Initialize Arduino
   }
 
-  // ✅ UPDATED: Simplified TTS initialization
+  // ✅ NEW: Initialize Arduino on page load
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Update LCD
+    await _arduino.updateLCD('X-Ray Upload', 'Ready');
+
+    // Bot looks at upload area (center position)
+    await _arduino.setBotPosition(head: 0, handL: 45, handR: 45);
+
+    await Future.delayed(const Duration(milliseconds: 1000));
+    await _arduino.gestureReset();
+  }
+
   Future<void> _initTtsAndSpeak() async {
     await _tts.initialize();
 
-    // Listen to TTS state changes to update UI
     _tts.addListener(() {
       if (mounted) setState(() {});
     });
@@ -43,13 +57,20 @@ class _XRayUploadPageState extends State<XRayUploadPage> {
 
   @override
   void dispose() {
-    _tts.stop(); // ✅ UPDATED: Use TTS Manager stop
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ NEW: Reset bot on exit
     super.dispose();
   }
 
-  // File Upload
+  // ✅ UPDATED: File Upload with Arduino feedback
   Future<void> _uploadFile() async {
     try {
+      // LCD: Waiting for file
+      await _arduino.updateLCD('Select X-Ray', 'File...');
+
+      // Bot gesture: Thinking
+      await _arduino.setBotPosition(head: 20, handL: 60, handR: 0);
+
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.image,
       );
@@ -60,24 +81,59 @@ class _XRayUploadPageState extends State<XRayUploadPage> {
           _uploadedFilePath = result.files.single.path;
         });
 
-        // ✅ UPDATED: Use TTS Manager speak
+        // ✅ LCD: File uploaded
+        await _arduino.updateLCD('File Uploaded', 'Successfully!');
+
+        // ✅ Bot: Success gesture (thumbs up simulation)
+        await _arduino.setBotPosition(head: 0, handL: 0, handR: 90);
+        await Future.delayed(const Duration(milliseconds: 800));
+        await _arduino.gestureReset();
+
         await _tts.speak(
           "X-ray image uploaded successfully. You can now proceed to AI analysis",
         );
+
+        // Reset LCD after speech
+        await Future.delayed(const Duration(seconds: 2));
+        await _arduino.updateLCD('X-Ray Ready', 'Tap Analyze');
+      } else {
+        // User cancelled
+        await _arduino.updateLCD('Upload', 'Cancelled');
+        await _arduino.gestureReset();
+
+        await Future.delayed(const Duration(seconds: 1));
+        await _arduino.updateLCD('X-Ray Upload', 'Ready');
       }
     } on PlatformException catch (e) {
       debugPrint("File picker error: $e");
+
+      // ✅ LCD: Error
+      await _arduino.updateLCD('Upload Error', 'Try Again');
+      await _arduino.setBotPosition(head: -30, handL: 0, handR: 0);
+
+      await Future.delayed(const Duration(seconds: 1));
+      await _arduino.updateLCD('X-Ray Upload', 'Ready');
+      await _arduino.gestureReset();
     }
   }
 
-  // Navigate to Loading + Analysis
-  void _analyzeFile(String resultType) {
+  // ✅ UPDATED: Navigate to Loading + Analysis with Arduino feedback
+  void _analyzeFile(String resultType) async {
     if (_uploadedFileName == null || _uploadedFilePath == null) {
       setState(() {
         _showError = true;
       });
 
-      // ✅ UPDATED: Use TTS Manager speak
+      // ✅ LCD: Error - No file
+      await _arduino.updateLCD('ERROR!', 'Upload X-Ray');
+
+      // ✅ Bot: Shake head (no gesture)
+      await _arduino.setBotPosition(head: -40, handL: 0, handR: 0);
+      await Future.delayed(const Duration(milliseconds: 300));
+      await _arduino.setBotPosition(head: 40);
+      await Future.delayed(const Duration(milliseconds: 300));
+      await _arduino.setBotPosition(head: 0);
+
       _tts.speak("Please upload a chest X-ray image first");
 
       Timer(const Duration(seconds: 1), () {
@@ -85,13 +141,25 @@ class _XRayUploadPageState extends State<XRayUploadPage> {
           setState(() {
             _showError = false;
           });
+          _arduino.updateLCD('X-Ray Upload', 'Ready');
         }
       });
       return;
     }
 
-    // ✅ UPDATED: Use TTS Manager speak
+    // ✅ LCD: Starting analysis
+    await _arduino.updateLCD('Starting', 'AI Analysis...');
+
+    // ✅ Bot: Excited gesture (both hands up)
+    await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+
+    await Future.delayed(const Duration(milliseconds: 600));
+    await _arduino.gestureReset();
+
     _tts.speak("Starting AI analysis of your chest X-ray");
+
+    // Small delay for effect
+    await Future.delayed(const Duration(milliseconds: 400));
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -324,7 +392,6 @@ class _XRayUploadPageState extends State<XRayUploadPage> {
                                 _analyzeFile('');
                                 return;
                               }
-                              // Let the actual prediction determine the result type
                               _analyzeFile('prediction');
                             },
                           ),
@@ -337,7 +404,6 @@ class _XRayUploadPageState extends State<XRayUploadPage> {
                                 _analyzeFile('');
                                 return;
                               }
-                              // Let the actual prediction determine the result type
                               _analyzeFile('prediction');
                             },
                           ),
@@ -350,7 +416,7 @@ class _XRayUploadPageState extends State<XRayUploadPage> {
             ),
           ),
 
-          // ✅ UPDATED: Speaking indicator using TTS Manager
+          // ✅ Speaking indicator using TTS Manager
           if (_tts.isSpeaking)
             Positioned(
               top: 20,

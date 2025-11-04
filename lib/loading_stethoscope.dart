@@ -3,13 +3,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'tts_manager.dart'; // ✅ REPLACED WITH TTS MANAGER
+import 'tts_manager.dart';
+import 'arduino_service.dart'; // ✅ IMPORT ARDUINO
 import 'result.dart';
 
-/// LoadingStethoscopePage
-/// - Requests microphone permission on first use
-/// - Starts mic access when recording begins
-/// - Stops mic access when "Stop Recording" is clicked
 class LoadingStethoscopePage extends StatefulWidget {
   const LoadingStethoscopePage({super.key});
 
@@ -19,14 +16,10 @@ class LoadingStethoscopePage extends StatefulWidget {
 
 class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
     with TickerProviderStateMixin {
-  // Standard header assets
   static const String backgroundAsset = 'assets/background.png';
   static const String lungsAsset = 'assets/lungs_ai.png';
-
-  // Pattern storage key
   static const String _kPatternKey = 'steth_pattern';
 
-  // State
   SharedPreferences? _prefs;
   String? _storedPattern;
   bool _isSettingPattern = false;
@@ -34,25 +27,21 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
   bool _showWrongPattern = false;
   bool _showBreathingAnimation = false;
 
-  // ✅ REPLACED: Using TtsManager instead of FlutterTts
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ ARDUINO
 
-  // Microphone state
   bool _isMicActive = false;
   bool _hasMicPermission = false;
 
-  // For pattern drawing
   final List<int> _selected = [];
   Offset? _currentPointer;
   bool _isDrawing = false;
 
-  // UI / sequence
   String _overlayText = '';
   bool _overlayVisible = false;
   bool _showStopButton = false;
   bool _isProcessingStop = false;
 
-  // constants for button
   static const double buttonWidth = 500.0;
   static const double buttonHeight = 500.0;
   static const double buttonBorderRadius = 100.0;
@@ -64,7 +53,6 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
   static const double buttonTextLeft = 70.0;
   static const double buttonTextTop = 380.0;
 
-  // animation helpers
   Timer? _countdownTimer;
   late Random _rnd;
 
@@ -72,27 +60,30 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
   void initState() {
     _rnd = Random();
     super.initState();
-    _initTts(); // ✅ UPDATED: Initialize TtsManager
+    _initTts();
+    _initArduino(); // ✅ INIT ARDUINO
     _initPrefs();
   }
 
-  // ✅ Initialize TtsManager
+  // ✅ ARDUINO INITIALIZATION
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    await _arduino.updateLCD('Live Record', 'Auth Required');
+    await _arduino.setBotPosition(head: 0, handL: 30, handR: 30);
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
-
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
-
       debugPrint("✅ TTS initialized successfully");
     } catch (e) {
       debugPrint("❌ TTS initialization error: $e");
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -112,11 +103,11 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
       setState(() {
         _isSettingPattern = true;
       });
-      // ✅ Speak pattern setup instruction
       await _speak("Set your unlock pattern");
+      await _arduino.updateLCD('Set Pattern', 'Draw Now'); // ✅ ARDUINO
     } else {
-      // ✅ Speak pattern unlock instruction
       await _speak("Draw your pattern to unlock");
+      await _arduino.updateLCD('Draw Pattern', 'To Unlock'); // ✅ ARDUINO
     }
   }
 
@@ -189,7 +180,10 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
     setState(() => _isMicActive = true);
     debugPrint('🎤 Microphone access started');
 
-    // ✅ Speak mic activation
+    // ✅ ARDUINO: Mic active
+    await _arduino.updateLCD('Microphone', 'Active');
+    await _arduino.setBotPosition(head: 0, handL: 50, handR: 50);
+
     await _speak("Microphone activated");
   }
 
@@ -198,7 +192,10 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
       setState(() => _isMicActive = false);
       debugPrint('🎤 Microphone access stopped');
 
-      // ✅ Speak mic deactivation
+      // ✅ ARDUINO: Recording stopped
+      _arduino.updateLCD('Recording', 'Stopped');
+      _arduino.setBotPosition(head: 15, handL: 70, handR: 70);
+
       _speak("Recording stopped. Analyzing audio");
     }
   }
@@ -212,7 +209,14 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
           isError: true,
         );
 
-        // ✅ Speak error
+        // ✅ ARDUINO: Error
+        await _arduino.updateLCD('Error!', 'Min 4 Dots');
+        await _arduino.setBotPosition(head: -30, handL: 0, handR: 0);
+        await Future.delayed(const Duration(milliseconds: 300));
+        await _arduino.setBotPosition(head: 30);
+        await Future.delayed(const Duration(milliseconds: 300));
+        await _arduino.setBotPosition(head: 0);
+
         await _speak("Pattern too short. Use at least 4 dots");
 
         _clearDrawing();
@@ -225,7 +229,12 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
       });
       _clearDrawing();
 
-      // ✅ Speak pattern saved
+      // ✅ ARDUINO: Pattern saved
+      await _arduino.updateLCD('Pattern', 'Saved!');
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 800));
+      await _arduino.gestureReset();
+
       await _speak("Pattern saved successfully");
 
       final hasPermission = await _requestMicPermission();
@@ -243,7 +252,12 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
       setState(() => _patternVerified = true);
       _clearDrawing();
 
-      // ✅ Speak pattern verified
+      // ✅ ARDUINO: Pattern verified
+      await _arduino.updateLCD('Pattern OK', 'Verified');
+      await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+      await Future.delayed(const Duration(milliseconds: 600));
+      await _arduino.gestureReset();
+
       await _speak("Pattern verified");
 
       final hasPermission = await _requestMicPermission();
@@ -260,7 +274,10 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
       });
       _showTemporaryMessage('Wrong pattern', isError: true);
 
-      // ✅ Speak wrong pattern
+      // ✅ ARDUINO: Wrong pattern
+      await _arduino.updateLCD('Wrong!', 'Try Again');
+      await _arduino.setBotPosition(head: -35, handL: 0, handR: 0);
+
       await _speak("Wrong pattern. Try again");
 
       Future.delayed(const Duration(seconds: 1), () {
@@ -269,6 +286,8 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
             _showWrongPattern = false;
             _clearDrawing();
           });
+          _arduino.updateLCD('Draw Pattern', 'To Unlock'); // ✅ ARDUINO
+          _arduino.gestureReset(); // ✅ ARDUINO
         }
       });
     }
@@ -301,18 +320,29 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
   Future<void> _startRecordingSequence() async {
     if (!mounted) return;
 
-    // Countdown
+    // ✅ ARDUINO: Recording starting
+    await _arduino.updateLCD('Recording', 'Starting...');
+    await _arduino.setBotPosition(head: 0, handL: 45, handR: 45);
+
     await _showFadeText('Recording starting in..', 900);
     await _speak("Recording starting in");
     await Future.delayed(const Duration(milliseconds: 160));
 
     for (int n = 3; n >= 1; n--) {
       await _showFadeText('$n', 700);
+
+      // ✅ ARDUINO: Countdown
+      await _arduino.updateLCD('Starting in', '$n...');
+
       await _speak('$n');
       await Future.delayed(const Duration(milliseconds: 160));
     }
 
     await _showFadeText('Start', 900);
+
+    // ✅ ARDUINO: Recording!
+    await _arduino.updateLCD('Recording', 'NOW!');
+
     await _speak('Start');
     await Future.delayed(const Duration(milliseconds: 300));
 
@@ -323,10 +353,20 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
 
     for (int cycle = 0; cycle < 3; cycle++) {
       await _showFadeText('Please breathe in deeply', 2000);
+
+      // ✅ ARDUINO: Breathe in
+      await _arduino.updateLCD('Breathe IN', 'Deeply...');
+      await _arduino.setBotPosition(head: 0, handL: 70, handR: 70);
+
       await _speak('Please breathe in deeply');
       await Future.delayed(const Duration(milliseconds: 180));
 
       await _showFadeText('Please breathe out deeply', 2000);
+
+      // ✅ ARDUINO: Breathe out
+      await _arduino.updateLCD('Breathe OUT', 'Slowly...');
+      await _arduino.setBotPosition(head: 0, handL: 40, handR: 40);
+
       await _speak('Please breathe out deeply');
       await Future.delayed(const Duration(milliseconds: 180));
     }
@@ -337,7 +377,10 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
         _showBreathingAnimation = false;
       });
 
-      // ✅ Speak stop instruction
+      // ✅ ARDUINO: Ready to stop
+      await _arduino.updateLCD('Recording', 'Tap to Stop');
+      await _arduino.setBotPosition(head: 0, handL: 50, handR: 50);
+
       await _speak("Tap stop recording when ready");
     }
   }
@@ -374,8 +417,8 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
       });
       _showTemporaryMessage('Draw new pattern');
 
-      // ✅ Speak pattern change
       await _speak("Draw new pattern");
+      await _arduino.updateLCD('New Pattern', 'Draw Now'); // ✅ ARDUINO
     }
   }
 
@@ -464,7 +507,7 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
               ),
             ),
 
-          // ✅ ADD: Speaking indicator
+          // Speaking indicator
           if (_tts.isSpeaking)
             Positioned(
               top: 20,
@@ -653,12 +696,13 @@ class _LoadingStethoscopePageState extends State<LoadingStethoscopePage>
   void dispose() {
     _countdownTimer?.cancel();
     _stopMicAccess();
-    _tts.stop(); // ✅ ADD: Stop TTS
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ ARDUINO CLEANUP
     super.dispose();
   }
 }
 
-// Pattern lock widget (3x3)
+// Pattern lock widget (unchanged)
 class _PatternLockWidget extends StatefulWidget {
   final double size;
   final double dotRadius;
@@ -912,7 +956,7 @@ class _PinAuthDialogState extends State<_PinAuthDialog> {
   }
 }
 
-// ✅ MODIFIED: Added TTS to _AnalysisLoadingPage
+// ✅ ANALYSIS LOADING PAGE WITH ARDUINO
 class _AnalysisLoadingPage extends StatefulWidget {
   final String chosenSide;
   final int seedRandom;
@@ -933,8 +977,8 @@ class _AnalysisLoadingPageState extends State<_AnalysisLoadingPage>
   late final AnimationController _controller;
   late final Animation<double> _scaleAnimation;
 
-  // ✅ ADD TTS
   final TtsManager _tts = TtsManager();
+  final ArduinoService _arduino = ArduinoService(); // ✅ ARDUINO
 
   final List<String> _messages = [
     'Filtering background noise...',
@@ -970,22 +1014,26 @@ class _AnalysisLoadingPageState extends State<_AnalysisLoadingPage>
       end: 1.1,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
 
-    _initTts(); // ✅ ADD: Initialize TtsManager
+    _initArduino(); // ✅ ARDUINO INIT
+    _initTts();
     _startTicker();
     _startDelayedResult();
   }
 
-  // ✅ Initialize TtsManager
+  // ✅ ARDUINO INITIALIZATION
+  Future<void> _initArduino() async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    await _arduino.updateLCD('Analyzing', 'Recording...');
+    await _arduino.setBotPosition(head: 15, handL: 60, handR: 60);
+  }
+
   Future<void> _initTts() async {
     try {
       await _tts.initialize();
-
-      // Listen to TTS state changes to update UI
       _tts.addListener(() {
         if (mounted) setState(() {});
       });
 
-      // ✅ Speak first message
       await Future.delayed(const Duration(milliseconds: 300));
       _speak(_messages[_msgIndex]);
     } catch (e) {
@@ -993,7 +1041,6 @@ class _AnalysisLoadingPageState extends State<_AnalysisLoadingPage>
     }
   }
 
-  // ✅ Speak text with TtsManager
   Future<void> _speak(String text) async {
     try {
       if (_tts.isSpeaking) {
@@ -1007,10 +1054,40 @@ class _AnalysisLoadingPageState extends State<_AnalysisLoadingPage>
   }
 
   void _startTicker() {
-    _ticker = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+    // ✅ ARDUINO LCD messages
+    final lcdMessages = [
+      ['Filtering', 'Noise...'],
+      ['Normalizing', 'Bands...'],
+      ['Detecting', 'Sounds...'],
+      ['Analyzing', 'Envelope...'],
+      ['AI Model', 'Calibrating...'],
+      ['Comparing', '8709 Samples'],
+      ['Extracting', 'Patterns...'],
+      ['Denoising', 'Signal...'],
+      ['Scoring', 'Events...'],
+      ['Finalizing', 'Results...'],
+    ];
+
+    _ticker = Timer.periodic(const Duration(milliseconds: 1500), (_) async {
       setState(() => _msgIndex = (_msgIndex + 1) % _messages.length);
 
-      // ✅ Speak every other message
+      // ✅ ARDUINO: Update LCD
+      if (_msgIndex < lcdMessages.length) {
+        await _arduino.updateLCD(
+          lcdMessages[_msgIndex][0],
+          lcdMessages[_msgIndex][1],
+        );
+      }
+
+      // ✅ ARDUINO: Bot movements
+      if (_msgIndex % 3 == 0) {
+        await _arduino.setBotPosition(
+          head: 10 + (_msgIndex % 2) * 10,
+          handL: 55 + (_msgIndex % 3) * 10,
+          handR: 55 + (_msgIndex % 3) * 10,
+        );
+      }
+
       if (_msgIndex % 2 == 0) {
         _speak(_messages[_msgIndex]);
       }
@@ -1022,7 +1099,11 @@ class _AnalysisLoadingPageState extends State<_AnalysisLoadingPage>
     _ticker?.cancel();
     _controller.dispose();
 
-    // ✅ Speak analysis complete
+    // ✅ ARDUINO: Complete
+    await _arduino.updateLCD('Analysis', 'Complete!');
+    await _arduino.setBotPosition(head: 0, handL: 90, handR: 90);
+    await Future.delayed(const Duration(milliseconds: 600));
+
     await _speak("Analysis complete. Displaying results");
 
     final result = _generatePercentages(widget.chosenSide);
@@ -1073,7 +1154,8 @@ class _AnalysisLoadingPageState extends State<_AnalysisLoadingPage>
   void dispose() {
     _ticker?.cancel();
     _controller.dispose();
-    _tts.stop(); // ✅ ADD: Stop TTS
+    _tts.stop();
+    _arduino.gestureReset(); // ✅ ARDUINO CLEANUP
     super.dispose();
   }
 
@@ -1140,7 +1222,6 @@ class _AnalysisLoadingPageState extends State<_AnalysisLoadingPage>
             ),
           ),
 
-          // ✅ ADD: Speaking indicator
           if (_tts.isSpeaking)
             Positioned(
               top: 20,
