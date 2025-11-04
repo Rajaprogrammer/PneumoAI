@@ -9,9 +9,9 @@ on:
 env:
   FLUTTER_VERSION: '3.35.7'
   JAVA_VERSION: '20'
-  RELEASE_NAME: 'PneumoAI v1.0.0'
-  RELEASE_TAG: 'v1.0.0'
-  RELEASE_BODY: 'First automated build of PneumoAI.'
+  RELEASE_NAME: 'PneumoAI v2.0.0 - With Arduino v1'
+  RELEASE_TAG: 'v2.0.0'
+  RELEASE_BODY: "PneumoAI's first arduino attempt"
 
 jobs:
   build:
