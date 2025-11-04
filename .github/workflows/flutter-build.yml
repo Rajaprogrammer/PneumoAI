@@ -1,61 +1,70 @@
-name: Flutter Build - Android APK
+name: Flutter Build - Optimized
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:  # Allow manual run
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build Flutter APK
+    name: Build Flutter APK (Cached)
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout your repo (your local files as-is)
+      # 1️⃣ Checkout your repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Flutter environment
+      # 2️⃣ Cache Flutter SDK
+      - name: Cache Flutter SDK
+        id: flutter-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.flutter
+          key: ${{ runner.os }}-flutter-3.24.5
+          restore-keys: |
+            ${{ runner.os }}-flutter-
+
+      # 3️⃣ Install Flutter (only if cache not found)
       - name: Setup Flutter
+        if: steps.flutter-cache.outputs.cache-hit != 'true'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.0'
+          flutter-version: '3.35.7'
+          channel: 'stable'
+          cache: false
 
-      # 3️⃣ Get dependencies
+      # 4️⃣ Cache pub packages
+      - name: Cache Pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      # 5️⃣ Cache Gradle
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 6️⃣ Install dependencies
       - name: Install dependencies
         run: flutter pub get
 
-      # 4️⃣ Build APK
+      # 7️⃣ Build release APK
       - name: Build release APK
         run: flutter build apk --release
 
-      # 5️⃣ Upload the built APK as an artifact (downloadable in Actions tab)
+      # 8️⃣ Upload artifact
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
-
-  release:
-    name: Publish GitHub Release
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download built artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: app-release
-          path: build-output
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: build-output/app-release.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
