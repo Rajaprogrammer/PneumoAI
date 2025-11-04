@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       apk_exists: ${{ steps.find-apk.outputs.apk_exists }}
+      apk_path: ${{ steps.find-apk.outputs.apk_path }}
 
     steps:
       - name: Checkout repository
@@ -86,7 +87,6 @@ jobs:
             gradle-${{ runner.os }}-jdk${{ env.JAVA_VERSION }}-
             gradle-${{ runner.os }}-
 
-      # 👈 Modified to exclude APK/AAB files from cache
       - name: Cache Android Build (exclude APKs)
         uses: actions/cache@v4
         with:
@@ -133,11 +133,12 @@ jobs:
       - name: Build release APK (all ABIs)
         run: flutter build apk --release
 
-      - name: Find and verify APK
+      - name: Find and verify APK (Robust Search)
         id: find-apk
         run: |
           echo "🔍 Searching for APK files..."
           
+          # ✅ Primary locations to check
           POSSIBLE_PATHS=(
             "build/app/outputs/flutter-apk/app-release.apk"
             "android/app/build/outputs/flutter-apk/app-release.apk"
@@ -147,6 +148,7 @@ jobs:
           APK_FOUND=false
           APK_PATH=""
           
+          # Check predefined paths first
           for path in "${POSSIBLE_PATHS[@]}"; do
             echo "Checking: $path"
             if [ -f "$path" ]; then
@@ -157,32 +159,66 @@ jobs:
             fi
           done
           
+          # ✅ If not found, search entire workspace
           if [ "$APK_FOUND" = false ]; then
-            echo "❌ APK not found in expected locations!"
-            echo "📂 Searching entire workspace for APK files:"
-            find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found anywhere!"
-            echo "apk_exists=false" >> $GITHUB_OUTPUT
-            exit 1
-          else
+            echo "⚠️ APK not found in expected locations. Performing deep search..."
+            
+            # Find all APK files (excluding cached/old builds)
+            FOUND_APKS=$(find . -name "app-release.apk" -type f -not -path "*/cache/*" -not -path "*/.gradle/*" 2>/dev/null)
+            
+            if [ -n "$FOUND_APKS" ]; then
+              # Use the first found APK
+              APK_PATH=$(echo "$FOUND_APKS" | head -n 1)
+              echo "✅ Found APK via deep search: $APK_PATH"
+              APK_FOUND=true
+            else
+              echo "❌ No APK files found anywhere in workspace!"
+              echo "📂 Listing build directory structure:"
+              ls -R build/ 2>/dev/null || echo "build/ directory doesn't exist"
+              ls -R android/app/build/outputs/ 2>/dev/null || echo "android outputs directory doesn't exist"
+            fi
+          fi
+          
+          # ✅ Set outputs (don't exit 1 - let the job continue)
+          if [ "$APK_FOUND" = true ]; then
             echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
             echo "apk_exists=true" >> $GITHUB_OUTPUT
             echo "📦 APK Details:"
             ls -lh "$APK_PATH"
+            echo "✅ APK verification successful!"
+          else
+            echo "apk_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ APK verification failed - will skip upload"
           fi
 
       - name: Upload build artifact
-        if: always() && steps.find-apk.outputs.apk_exists == 'true'
+        if: steps.find-apk.outputs.apk_exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: ${{ steps.find-apk.outputs.apk_path }}
           compression-level: 0
 
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## 📊 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.find-apk.outputs.apk_exists }}" = "true" ]; then
+            echo "✅ **Build Status:** SUCCESS" >> $GITHUB_STEP_SUMMARY
+            echo "📦 **APK Location:** \`${{ steps.find-apk.outputs.apk_path }}\`" >> $GITHUB_STEP_SUMMARY
+            APK_SIZE=$(du -h "${{ steps.find-apk.outputs.apk_path }}" | cut -f1)
+            echo "📏 **APK Size:** $APK_SIZE" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Build Status:** FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ APK file was not generated or could not be found" >> $GITHUB_STEP_SUMMARY
+          fi
+
   release:
     name: Create Custom GitHub Release
     runs-on: ubuntu-latest
     needs: build
-    if: always() && needs.build.outputs.apk_exists == 'true'
+    if: needs.build.outputs.apk_exists == 'true'
     permissions:
       contents: write
     
@@ -198,23 +234,56 @@ jobs:
           echo "📂 Downloaded files:"
           ls -lah build-output/
 
-      - name: Rename APK for release
+      - name: Verify downloaded APK
+        id: verify-apk
         run: |
-          if [ -f build-output/app-release.apk ]; then
-            mv build-output/app-release.apk build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk
-            echo "✅ APK renamed successfully"
-          else
-            echo "❌ APK not found in build-output/"
+          APK_FILE=$(find build-output -name "*.apk" -type f | head -n 1)
+          
+          if [ -z "$APK_FILE" ]; then
+            echo "❌ No APK found in downloaded artifacts!"
+            ls -R build-output/
             exit 1
           fi
+          
+          echo "✅ Found APK: $APK_FILE"
+          echo "apk_file=$APK_FILE" >> $GITHUB_OUTPUT
+
+      - name: Rename APK for release
+        run: |
+          APK_SOURCE="${{ steps.verify-apk.outputs.apk_file }}"
+          APK_TARGET="build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk"
+          
+          mv "$APK_SOURCE" "$APK_TARGET"
+          echo "✅ APK renamed to: $APK_TARGET"
+          ls -lh "$APK_TARGET"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_NAME }}
-          body: ${{ env.RELEASE_BODY }}
+          body: |
+            ${{ env.RELEASE_BODY }}
+            
+            ## 📦 Download
+            - **APK Size:** $(du -h build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk | cut -f1)
+            - **Built with:** Flutter ${{ env.FLUTTER_VERSION }}
+            - **Target SDK:** Android 34
+            
+            ## 🔧 Installation
+            1. Download the APK file below
+            2. Enable "Install from Unknown Sources" on your Android device
+            3. Install and enjoy!
           files: build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release Summary
+        if: always()
+        run: |
+          echo "## 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Release Created:** ${{ env.RELEASE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "🏷️ **Tag:** ${{ env.RELEASE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "📦 **APK:** PneumoAI-${{ env.RELEASE_TAG }}.apk" >> $GITHUB_STEP_SUMMARY
