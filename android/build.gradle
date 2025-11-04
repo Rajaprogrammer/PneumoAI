@@ -1,0 +1,81 @@
+buildscript {
+    ext.kotlin_version = '2.1.0'
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url "https://chaquo.com/maven"
+            content {
+                includeGroup "com.chaquo.python"
+            }}
+        maven { url 'https://jitpack.io' }
+        maven { url 'https://oss.sonatype.org/content/repositories/snapshots' }  // ADD THIS
+        // maven { url 'https://mvnrepository.com/repos/central' }
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.2'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        // classpath "com.chaquo.python:gradle:15.0.1" // ****CHAQUOPY DISABLED TEMPORARILY - DO NOT REMOVE ANY FLES RELATED TO IT****
+        classpath "com.github.ben-manes:gradle-versions-plugin:0.51.0"
+    }
+}
+
+apply plugin: "com.github.ben-manes.versions"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url "https://chaquo.com/maven"
+            content {
+                includeGroup "com.chaquo.python"
+            }}
+        maven { url 'https://jitpack.io' }
+        maven { url 'https://oss.sonatype.org/content/repositories/snapshots' }  // ADD THIS
+        // maven { url 'https://mvnrepository.com/repos/central' }
+
+    }
+    
+    configurations.all {
+        resolutionStrategy {
+            force 'com.chaquo.python:chaquopy_java:15.0.1'
+        }
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.layout.buildDirectory
+}
+
+// Force all subprojects to use minSdk 24 for Chaquopy compatibility
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            project.android {
+                defaultConfig {
+                    if (defaultConfig.minSdkVersion != null && defaultConfig.minSdkVersion.apiLevel < 24) {
+                        defaultConfig.minSdkVersion 24
+                    }
+                    if (!defaultConfig.hasProperty('minSdk') || defaultConfig.minSdk < 24) {
+                        minSdk 24
+                    }
+                }
+            }
+        }
+    }
+}
+    afterEvaluate { project ->
+        if (project.plugins.hasPlugin('com.chaquo.python')) {
+            project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+                kotlinOptions {
+                    jvmTarget = "20"
+                }
+            }
+        }
+}
+
+
+
+

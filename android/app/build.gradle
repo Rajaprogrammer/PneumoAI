@@ -1,0 +1,166 @@
+plugins {
+    id 'com.android.application'
+    id 'kotlin-android'
+    id 'dev.flutter.flutter-gradle-plugin'
+    // id 'com.chaquo.python' //****CHAQUOPY DISABLED TEMPORARILY - DO NOT REMOVE ANY FLES RELATED TO IT****
+    id 'kotlin-kapt'
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
+
+android {
+    namespace 'com.example.pneumoai_6'
+    compileSdk 36
+    ndkVersion "25.2.9519653"
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_20
+        targetCompatibility JavaVersion.VERSION_20
+    }
+
+    kotlinOptions {
+        jvmTarget = "20"
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.example.pneumoai_6"
+        minSdk 24   // Required by Chaquopy
+        targetSdk 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        multiDexEnabled true
+
+        ndk {
+            // Support ARM64 and x86_64 (emulators). Python/TFLite guarded at runtime for x86_64.
+            abiFilters "arm64-v8a", "x86_64", "armeabi-v7a"
+        }
+        aaptOptions {
+            noCompress "tflite", "ptl", "pt", "onnx"
+        }
+
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    packagingOptions {
+
+        pickFirst 'lib/x86/libc++_shared.so'
+        pickFirst 'lib/x86_64/libc++_shared.so'
+        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+        pickFirst 'lib/arm64-v8a/libfbjni.so'
+        pickFirst 'lib/armeabi-v7a/libfbjni.so'
+        
+        // Exclude duplicate META-INF files
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/license.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+        exclude 'META-INF/notice.txt'
+        exclude 'META-INF/ASL2.0'
+        exclude 'META-INF/*.kotlin_module'
+
+        jniLibs {
+            // Ensure a single libc++_shared.so is picked to avoid conflicts
+            useLegacyPackaging = true
+        }
+        resources {
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+                '/META-INF/{AL2.0,LGPL2.1}'
+            ]
+            // Keep model files uncompressed
+            pickFirsts += ['**/*.ptl', '**/*.tflite']
+        }
+        androidResources {
+        noCompress 'tflite', 'ptl', 'pt', 'onnx', 'bin'
+    }
+
+    }
+    aaptOptions {
+        noCompress "tflite"
+        noCompress "ptl"
+        noCompress "pt"
+        noCompress "onnx"
+        noCompress "bin"
+    }
+    // Ensure assets are packaged (for model files)
+    sourceSets {
+        main.assets.srcDirs += 'src/main/assets'
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+// chaquopy {
+//     defaultConfig {
+//         buildPython "C:/Users/CA Articles/AppData/Local/Programs/Python/Python311/python.exe"
+//         pip {
+//             install "requests"
+//             // Minimal, Chaquopy-friendly deps
+//             install "numpy"
+//             install "pillow"
+//                 // Chaquopy provides only 2.1.0 and 2.5.0. Use 2.5.0.
+//                 install "tflite-runtime==2.5.0"
+//         }
+//     }
+// }
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    implementation 'androidx.core:core-ktx:1.10.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    // Removed native ML deps; inference via Python tflite-runtime
+    implementation 'org.tensorflow:tensorflow-lite:2.12.0' // or latest stable
+    implementation 'org.tensorflow:tensorflow-lite-support:0.4.3'
+    implementation 'org.tensorflow:tensorflow-lite-gpu:2.12.0' // optional, for GPU acceleration
+    implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:2.12.0'
+    // TarsosDSP - Use correct JitPack format (without 'v')
+    // implementation 'com.github.JorenSix:TarsosDSP:v2.3'
+    // Try Maven Central naming
+    // implementation 'be.tarsos.dsp:core:2.4'
+    // OR try:
+    // implementation 'com.github.axet:TarsosDSP:2.4'
+    
+    // PyTorch - Use version that exists (1.10.0 is stable)
+    implementation 'org.pytorch:pytorch_android:1.10.0'
+    implementation 'org.pytorch:pytorch_android_torchvision:1.10.0'
+
+    // OR use the latest stable version
+    // implementation 'org.pytorch:pytorch_android_lite:1.12.2'
+    implementation 'com.facebook.soloader:soloader:0.10.5'  // ← ADD THIS
+    implementation 'com.facebook.fbjni:fbjni-java-only:0.2.2'
+
+}
