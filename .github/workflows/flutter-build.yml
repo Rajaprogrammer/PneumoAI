@@ -359,6 +359,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_NAME }}
+          target_commitish: ${{ github.sha }}  # ✅ FIX: Use exact commit that triggered this workflow
           body: |
             ${{ env.RELEASE_BODY }}
             
@@ -369,6 +370,7 @@ jobs:
             - **Built with:** Flutter ${{ env.FLUTTER_VERSION }}
             - **Target SDK:** Android 34
             - **Build:** #${{ github.run_number }}
+            - **Commit:** ${{ github.sha }}
             
             ## 🔧 Installation
             1. Download the APK file below
@@ -396,5 +398,6 @@ jobs:
           echo "- **Tag:** ${{ env.RELEASE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- **APK:** PneumoAI-${{ env.RELEASE_TAG }}.apk" >> $GITHUB_STEP_SUMMARY
           echo "- **SHA256:** \`${{ steps.process-apk.outputs.sha256 }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📥 [Download from Releases](https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }})" >> $GITHUB_STEP_SUMMARY
