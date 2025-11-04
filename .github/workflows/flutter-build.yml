@@ -4,23 +4,27 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:  # allow manual runs too
+  workflow_dispatch:
 
 env:
   FLUTTER_VERSION: '3.35.7'
   JAVA_VERSION: '20'
-  RELEASE_NAME: 'PneumoAI v1.0.0'     # 👈 change this to whatever release name you want
-  RELEASE_TAG: 'v1.0.0'               # 👈 Git tag for the release
-  RELEASE_BODY: 'First automated build of PneumoAI.'  # 👈 optional description text
+  RELEASE_NAME: 'PneumoAI v1.0.0'
+  RELEASE_TAG: 'v1.0.0'
+  RELEASE_BODY: 'First automated build of PneumoAI.'
 
 jobs:
   build:
     name: Build Flutter APK (Cached)
     runs-on: ubuntu-latest
+    outputs:
+      apk_exists: ${{ steps.find-apk.outputs.apk_exists }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -29,12 +33,29 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: 'gradle'
 
-      - name: Cache Flutter SDK
-        id: flutter-cache
+      - name: Cache Android SDK & Build Tools
         uses: actions/cache@v4
         with:
-          path: ~/.flutter
-          key: flutter-${{ runner.os }}-${{ env.FLUTTER_VERSION }}
+          path: |
+            /usr/local/lib/android/sdk/build-tools
+            /usr/local/lib/android/sdk/platform-tools
+            /usr/local/lib/android/sdk/platforms
+            /usr/local/lib/android/sdk/cmdline-tools
+            /usr/local/lib/android/sdk/cmake
+            /usr/local/lib/android/sdk/tools
+          key: android-sdk-buildtools-${{ runner.os }}-34
+          restore-keys: |
+            android-sdk-buildtools-${{ runner.os }}-
+
+      - name: Cache Android NDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/ndk-bundle
+          key: android-ndk-${{ runner.os }}-r25c
+          restore-keys: |
+            android-ndk-${{ runner.os }}-
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -59,44 +80,131 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
+            android/.gradle
           key: gradle-${{ runner.os }}-jdk${{ env.JAVA_VERSION }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-jdk${{ env.JAVA_VERSION }}-
+            gradle-${{ runner.os }}-
+
+      - name: Cache Android Build
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/app/build
+            build/app
+          key: android-build-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'pubspec.lock') }}
+          restore-keys: |
+            android-build-${{ runner.os }}-
 
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build release APK
+      - name: Precache Flutter artifacts
+        run: flutter precache --android
+
+      - name: Configure Gradle for maximum performance
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/gradle.properties <<EOF
+          org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError -XX:+UseParallelGC
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          org.gradle.daemon=true
+          org.gradle.configureondemand=true
+          kotlin.compiler.execution.strategy=in-process
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+
+      - name: Set NDK version
+        run: |
+          echo "ndk.dir=/usr/local/lib/android/sdk/ndk-bundle" >> android/local.properties
+          echo "sdk.dir=/usr/local/lib/android/sdk" >> android/local.properties
+
+      - name: Configure Android build
+        run: |
+          if ! grep -q "ndkVersion" android/app/build.gradle; then
+            sed -i '/android {/a \    ndkVersion flutter.ndkVersion' android/app/build.gradle
+          fi
+
+      - name: Build release APK (all ABIs)
+        continue-on-error: true
         run: flutter build apk --release
 
+      - name: Find and verify APK
+        id: find-apk
+        run: |
+          echo "🔍 Searching for APK files..."
+          
+          POSSIBLE_PATHS=(
+            "build/app/outputs/flutter-apk/app-release.apk"
+            "android/app/build/outputs/flutter-apk/app-release.apk"
+            "android/app/build/outputs/apk/release/app-release.apk"
+          )
+          
+          APK_FOUND=false
+          APK_PATH=""
+          
+          for path in "${POSSIBLE_PATHS[@]}"; do
+            if [ -f "$path" ]; then
+              echo "✅ Found APK at: $path"
+              APK_PATH="$path"
+              APK_FOUND=true
+              break
+            fi
+          done
+          
+          if [ "$APK_FOUND" = false ]; then
+            echo "❌ APK not found in expected locations!"
+            echo "📂 Searching entire workspace for APK files:"
+            find . -name "*.apk" -type f 2>/dev/null || echo "No APK files found anywhere!"
+            echo "apk_exists=false" >> $GITHUB_OUTPUT
+          else
+            echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+            echo "apk_exists=true" >> $GITHUB_OUTPUT
+            echo "📦 APK Details:"
+            ls -lh "$APK_PATH"
+          fi
+
       - name: Upload build artifact
+        if: steps.find-apk.outputs.apk_exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ steps.find-apk.outputs.apk_path }}
+          compression-level: 0
+
+      - name: Build failed - no APK
+        if: steps.find-apk.outputs.apk_exists == 'false'
+        run: |
+          echo "::error::Build completed but APK was not generated!"
+          echo "::warning::Release will NOT be created"
 
   release:
     name: Create Custom GitHub Release
     runs-on: ubuntu-latest
     needs: build
+    if: needs.build.outputs.apk_exists == 'true'
     permissions:
       contents: write
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Download built artifact
         uses: actions/download-artifact@v4
         with:
           name: app-release
           path: build-output
 
-      - name: Create GitHub Release with custom name
-        uses: softprops/action-gh-release@v1
+      - name: Rename APK for release
+        run: mv build-output/app-release.apk build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_NAME }}
           body: ${{ env.RELEASE_BODY }}
-          files: build-output/app-release.apk
+          files: build-output/PneumoAI-${{ env.RELEASE_TAG }}.apk
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
