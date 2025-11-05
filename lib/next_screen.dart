@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+// Assuming these are local imports
 import 'scale.dart';
 import 'chest_xray.dart';
 import 'stethoscope_main.dart';
@@ -20,9 +21,17 @@ class _NextPageState extends State<NextPage> {
   final TtsManager _tts = TtsManager();
   final ArduinoService _arduino = ArduinoService();
 
+  // Controllers for the configuration dialog
+  final TextEditingController _ipController = TextEditingController();
+  final TextEditingController _portController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
+
+    // Initialize controllers with current values from the service
+    _ipController.text = _arduino.currentIp;
+    _portController.text = _arduino.currentPort;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeTts();
@@ -33,7 +42,7 @@ class _NextPageState extends State<NextPage> {
   Future<void> _initializeArduino() async {
     // Update LCD
     await _arduino.updateLCD('PneumoAI', 'System Ready');
-    
+
     // Welcome gesture
     await Future.delayed(const Duration(milliseconds: 500));
     await _arduino.gestureWelcome();
@@ -56,20 +65,20 @@ class _NextPageState extends State<NextPage> {
   void _speakWelcomeMessage() async {
     try {
       await Future.delayed(const Duration(milliseconds: 300));
-      
+
       // LCD update
       await _arduino.updateLCD('Welcome to', 'PneumoAI');
-      
+
       await _tts.speak("Welcome to PneumoAI");
       await Future.delayed(const Duration(seconds: 2));
-      
+
       // LCD update
       await _arduino.updateLCD('AI Detection', 'System');
-      
+
       await _tts.speak(
         "Detects pneumonia by analyzing chest X-rays and lung sounds",
       );
-      
+
       // Reset LCD
       await Future.delayed(const Duration(seconds: 3));
       await _arduino.updateLCD('PneumoAI', 'Ready');
@@ -82,8 +91,98 @@ class _NextPageState extends State<NextPage> {
   void dispose() {
     _tts.stop();
     _arduino.gestureReset();
+    _ipController.dispose();
+    _portController.dispose();
     super.dispose();
   }
+
+  // --- NEW: Configuration Dialog Implementation ---
+  Future<void> _showConfigDialog() async {
+    // Ensure controllers reflect the absolute latest state
+    _ipController.text = _arduino.currentIp;
+    _portController.text = _arduino.currentPort;
+
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Edit Arduino Server Configuration'),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                const Text(
+                  'This configuration connects your app to the Flask server running the Arduino serial bridge.',
+                  style: TextStyle(fontSize: 14, color: Colors.grey),
+                ),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: _ipController,
+                  decoration: const InputDecoration(
+                    labelText: 'IP Address (e.g., 192.168.68.106)',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.url,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _portController,
+                  decoration: const InputDecoration(
+                    labelText: 'Port (e.g., 5000)',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Target URL: ${_arduino.serverUrl}',
+                  style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            ElevatedButton(
+              child: const Text('Save & Apply'),
+              onPressed: () async {
+                final newIp = _ipController.text.trim();
+                final newPort = _portController.text.trim();
+
+                if (newIp.isNotEmpty && newPort.isNotEmpty) {
+                  await _arduino.setConfig(newIp, newPort);
+                  if (mounted) {
+                    // Update state to confirm change
+                    setState(() {});
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Config updated to: $newIp:$newPort'),
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                  Navigator.of(context).pop();
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('IP and Port cannot be empty.'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+  // ---------------------------------------------------
 
   void _handleGlobalTap() {
     final now = DateTime.now();
@@ -112,12 +211,12 @@ class _NextPageState extends State<NextPage> {
   Future<void> _onStethoscopePressed() async {
     // Update LCD
     await _arduino.updateLCD('Lung Sound', 'Detection Mode');
-    
+
     // Point to stethoscope option
     await _arduino.gesturePointLeft();
-    
+
     await Future.delayed(const Duration(milliseconds: 800));
-    
+
     _tts.stop();
     Navigator.push(
       context,
@@ -130,12 +229,12 @@ class _NextPageState extends State<NextPage> {
   Future<void> _onXRayPressed() async {
     // Update LCD
     await _arduino.updateLCD('X-Ray Analysis', 'Mode');
-    
+
     // Point to X-ray option
     await _arduino.gesturePointRight();
-    
+
     await Future.delayed(const Duration(milliseconds: 800));
-    
+
     _tts.stop();
     Navigator.push(
       context,
@@ -413,18 +512,21 @@ class _NextPageState extends State<NextPage> {
               ),
             ),
 
-            // ✅ SERIAL TOGGLE BUTTON (Top Right, below TTS)
+            // ✅ SERIAL TOGGLE/CONFIG BUTTON (Top Right, below TTS)
             Positioned(
               top: 80,
               right: 20,
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
+                  // 1. Regular tap toggles serial state
                   onTap: () {
                     setState(() {
                       _arduino.toggleSerial();
                     });
                   },
+                  // 2. Long press opens the configuration dialog
+                  onLongPress: _showConfigDialog,
                   borderRadius: BorderRadius.circular(30),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -463,6 +565,13 @@ class _NextPageState extends State<NextPage> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                        // Add an indicator for long press action
+                        if (!_arduino.isSerialEnabled)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8.0),
+                            child: Icon(Icons.settings,
+                                color: Colors.white, size: 16),
+                          ),
                       ],
                     ),
                   ),

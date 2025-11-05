@@ -1,28 +1,72 @@
 import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+// Import the persistence package
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ArduinoService {
   static final ArduinoService _instance = ArduinoService._internal();
   factory ArduinoService() => _instance;
-  ArduinoService._internal();
 
-  // Configuration
-  String _ipAddress = '192.168.68.106';
-  String _port = '5000';
+  // --- Persistence Keys ---
+  static const String _ipKey = 'arduino_ip_address';
+  static const String _portKey = 'arduino_port';
+
+  // Configuration (made package-private for reading in NextPage's State initialization)
+  String _ipAddress = '192.168.68.106'; // Default value
+  String _port = '5000'; // Default value
   bool _serialEnabled = true;
 
+  // Internal constructor now loads configuration
+  ArduinoService._internal() {
+    _loadConfig();
+  }
+
+  // --- Getters ---
   bool get isSerialEnabled => _serialEnabled;
   String get serverUrl => 'http://$_ipAddress:$_port';
+  // Expose current configuration for the UI dialog
+  String get currentIp => _ipAddress;
+  String get currentPort => _port;
+  // ------------------
 
-  void setConfig(String ip, String port) {
+  // --- Persistence Methods ---
+
+  Future<void> _loadConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _ipAddress = prefs.getString(_ipKey) ?? _ipAddress;
+      _port = prefs.getString(_portKey) ?? _port;
+      debugPrint('🔧 Config loaded: $serverUrl');
+    } catch (e) {
+      debugPrint('❌ Failed to load config: $e');
+    }
+  }
+
+  Future<void> _saveConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_ipKey, _ipAddress);
+      await prefs.setString(_portKey, _port);
+      debugPrint('🔧 Config saved: $serverUrl');
+    } catch (e) {
+      debugPrint('❌ Failed to save config: $e');
+    }
+  }
+  // ------------------
+
+  // Update setConfig to be async and trigger saving
+  Future<void> setConfig(String ip, String port) async {
     _ipAddress = ip;
     _port = port;
+    await _saveConfig();
   }
 
   void toggleSerial() {
     _serialEnabled = !_serialEnabled;
-    debugPrint('🔧 Serial communication ${_serialEnabled ? "ENABLED" : "DISABLED"}');
+    debugPrint(
+      '🔧 Serial communication ${_serialEnabled ? "ENABLED" : "DISABLED"}',
+    );
   }
 
   void enableSerial(bool enable) {
@@ -39,14 +83,16 @@ class ArduinoService {
     try {
       final url = Uri.parse('$serverUrl/send?cmd=$command');
       debugPrint('📡 Sending: $command');
-      
-      final response = await http.get(url).timeout(
-        const Duration(seconds: 2),
-        onTimeout: () {
-          debugPrint('⏱️ Timeout sending: $command');
-          return http.Response('Timeout', 408);
-        },
-      );
+
+      final response = await http
+          .get(url)
+          .timeout(
+            const Duration(seconds: 2),
+            onTimeout: () {
+              debugPrint('⏱️ Timeout sending: $command');
+              return http.Response('Timeout', 408);
+            },
+          );
 
       if (response.statusCode == 200) {
         debugPrint('✅ Sent: $command');
@@ -66,16 +112,12 @@ class ArduinoService {
   }
 
   // Bot Commands (servo positions)
-  Future<void> setBotPosition({
-    int? head,
-    int? handL,
-    int? handR,
-  }) async {
+  Future<void> setBotPosition({int? head, int? handL, int? handR}) async {
     List<String> parts = [];
     if (head != null) parts.add('head=$head');
     if (handL != null) parts.add('handl=$handL');
     if (handR != null) parts.add('handr=$handR');
-    
+
     if (parts.isNotEmpty) {
       await sendCommand('bot:${parts.join(' ')}');
     }
@@ -93,7 +135,8 @@ class ArduinoService {
     int defaultLeft = 0,
     int defaultRight = 0,
   }) async {
-    String cmd = 'servo:$headAngle $headDuration $leftAngle $leftDuration $rightAngle $rightDuration($defaultHead $defaultLeft $defaultRight)';
+    String cmd =
+        'servo:$headAngle $headDuration $leftAngle $leftDuration $rightAngle $rightDuration($defaultHead $defaultLeft $defaultRight)';
     await sendCommand(cmd);
   }
 

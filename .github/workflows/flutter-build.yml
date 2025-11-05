@@ -129,6 +129,17 @@ jobs:
           if ! grep -q "ndkVersion" android/app/build.gradle; then
             sed -i '/android {/a \    ndkVersion flutter.ndkVersion' android/app/build.gradle
           fi
+            # 🔐 Decode and prepare signing key (for permanent release keystore)
+      - name: Decode release keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/release-key.keystore
+
+      - name: Create key.properties for signing
+        run: |
+          echo "storePassword=$KEYSTORE_PASSWORD" > android/key.properties
+          echo "keyPassword=$KEY_PASSWORD" >> android/key.properties
+          echo "keyAlias=$KEY_ALIAS" >> android/key.properties
+          echo "storeFile=release-key.keystore" >> android/key.properties
 
       # ✅ BUILD ALWAYS CONTINUES EVEN IF IT RETURNS EXIT CODE 1
       - name: Build release APK (all ABIs)
