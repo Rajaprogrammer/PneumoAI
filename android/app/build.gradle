@@ -15,13 +15,6 @@ if (localPropertiesFile.exists()) {
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
 def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
 
-// --- Load signing info from key.properties ---
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file("key.properties")
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
-
 android {
     namespace 'com.example.pneumoai_6'
     compileSdk 36
@@ -50,7 +43,8 @@ android {
         multiDexEnabled true
 
         ndk {
-            abiFilters "arm64-v8a", "x86_64", "armeabi-v7a"
+            // Include all common ABIs for universal compatibility
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
         }
 
         aaptOptions {
@@ -58,23 +52,30 @@ android {
         }
     }
 
-        // 🔹 Disable all custom signing
-    // (Gradle/Flutter will use default debug keystore for local builds,
-    // and unsigned release APK for CI/CD builds.)
     buildTypes {
         release {
             minifyEnabled false
             shrinkResources false
-            // 🔸 Remove signing
-            signingConfig null
+
+            // ✅ Use the default debug keystore to sign release builds too
+            // so the APK installs everywhere without needing a custom keystore.
+            signingConfig signingConfigs.debug
+
+            // ✅ Build one universal APK (no ABI splits)
+            splits {
+                abi {
+                    enable false
+                }
+            }
+
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+
         debug {
             minifyEnabled false
             shrinkResources false
         }
     }
-
 
     packagingOptions {
         pickFirst 'lib/x86/libc++_shared.so'
