@@ -58,20 +58,15 @@ android {
         }
     }
 
-    signingConfigs {
-        release {
-            keyAlias keystoreProperties['keyAlias']
-            keyPassword keystoreProperties['keyPassword']
-            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
-            storePassword keystoreProperties['storePassword']
-        }
-    }
-
+        // 🔹 Disable all custom signing
+    // (Gradle/Flutter will use default debug keystore for local builds,
+    // and unsigned release APK for CI/CD builds.)
     buildTypes {
         release {
             minifyEnabled false
             shrinkResources false
-            signingConfig signingConfigs.release  // ✅ use permanent key
+            // 🔸 Remove signing
+            signingConfig null
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
@@ -79,6 +74,7 @@ android {
             shrinkResources false
         }
     }
+
 
     packagingOptions {
         pickFirst 'lib/x86/libc++_shared.so'
